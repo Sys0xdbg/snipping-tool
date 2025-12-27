@@ -20,80 +20,75 @@ void DrawIcon(HDC hdc, int id, const RECT& rect, COLORREF color) {
     int cx = (rect.left + rect.right) / 2;
     int cy = (rect.top + rect.bottom) / 2;
 
-    HPEN pen = CreatePen(PS_SOLID, 1, color);
-    HPEN penThick = CreatePen(PS_SOLID, 2, color);
-    HPEN oldPen = (HPEN)SelectObject(hdc, pen);
-    HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
-
-    switch (id) {
-    case BTN_MODE_RECT: {
-        int s = 7;
-        int c = 4;
-        SelectObject(hdc, penThick);
-        MoveToEx(hdc, cx - s, cy - s + c, nullptr); LineTo(hdc, cx - s, cy - s); LineTo(hdc, cx - s + c, cy - s);
-        MoveToEx(hdc, cx + s - c, cy - s, nullptr); LineTo(hdc, cx + s, cy - s); LineTo(hdc, cx + s, cy - s + c);
-        MoveToEx(hdc, cx + s, cy + s - c, nullptr); LineTo(hdc, cx + s, cy + s); LineTo(hdc, cx + s - c, cy + s);
-        MoveToEx(hdc, cx - s + c, cy + s, nullptr); LineTo(hdc, cx - s, cy + s); LineTo(hdc, cx - s, cy + s - c);
-        break;
-    }
-    case BTN_MODE_WINDOW: {
-        SelectObject(hdc, penThick);
-        RoundRect(hdc, cx - 8, cy - 6, cx + 8, cy + 7, 3, 3);
-        SelectObject(hdc, pen);
-        MoveToEx(hdc, cx - 7, cy - 2, nullptr);
-        LineTo(hdc, cx + 7, cy - 2);
-        HBRUSH dotBrush = CreateSolidBrush(color);
-        RECT dot1 = { cx + 3, cy - 5, cx + 5, cy - 3 };
-        RECT dot2 = { cx + 5, cy - 5, cx + 7, cy - 3 };
-        FillRect(hdc, &dot1, dotBrush);
-        FillRect(hdc, &dot2, dotBrush);
-        DeleteObject(dotBrush);
-        break;
-    }
-    case BTN_MODE_FULLSCREEN: {
-        SelectObject(hdc, penThick);
-        RoundRect(hdc, cx - 9, cy - 6, cx + 9, cy + 4, 2, 2);
-        SelectObject(hdc, pen);
-        MoveToEx(hdc, cx - 3, cy + 4, nullptr);
-        LineTo(hdc, cx - 3, cy + 7);
-        LineTo(hdc, cx + 3, cy + 7);
-        LineTo(hdc, cx + 3, cy + 4);
-        break;
-    }
-    case BTN_MODE_TEXT: {
-        // Draw "T" for text/OCR
-        SelectObject(hdc, penThick);
-        MoveToEx(hdc, cx - 6, cy - 6, nullptr);
-        LineTo(hdc, cx + 7, cy - 6);
-        MoveToEx(hdc, cx, cy - 6, nullptr);
-        LineTo(hdc, cx, cy + 7);
-        // Serifs
-        SelectObject(hdc, pen);
-        MoveToEx(hdc, cx - 3, cy + 7, nullptr);
-        LineTo(hdc, cx + 4, cy + 7);
-        break;
-    }
-    case BTN_SETTINGS: {
-        SelectObject(hdc, penThick);
-        Ellipse(hdc, cx - 3, cy - 3, cx + 4, cy + 4);
-        SelectObject(hdc, pen);
-        for (int i = 0; i < 6; i++) {
-            double angle = i * 3.14159 / 3;
-            int x1 = cx + (int)(5 * cos(angle));
-            int y1 = cy + (int)(5 * sin(angle));
-            int x2 = cx + (int)(8 * cos(angle));
-            int y2 = cy + (int)(8 * sin(angle));
-            MoveToEx(hdc, x1, y1, nullptr);
-            LineTo(hdc, x2, y2);
+    // For mode buttons, use Unicode characters like the overlay
+    if (id == BTN_MODE_RECT || id == BTN_MODE_WINDOW || id == BTN_MODE_FULLSCREEN || id == BTN_MODE_TEXT) {
+        const wchar_t* icon = nullptr;
+        switch (id) {
+        case BTN_MODE_RECT:       icon = L"\u25AD"; break;  // ▭
+        case BTN_MODE_WINDOW:     icon = L"\u2750"; break;  // ❐
+        case BTN_MODE_FULLSCREEN: icon = L"\u2B1C"; break;  // ⬜
+        case BTN_MODE_TEXT:       icon = L"\u0054"; break;  // T
         }
-        break;
-    }
+
+        if (icon) {
+            HFONT iconFont = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Symbol");
+            HFONT oldFont = (HFONT)SelectObject(hdc, iconFont);
+
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, color);
+
+            RECT textRect = rect;
+            DrawTextW(hdc, icon, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+            SelectObject(hdc, oldFont);
+            DeleteObject(iconFont);
+        }
+        return;
     }
 
-    SelectObject(hdc, oldBrush);
-    SelectObject(hdc, oldPen);
-    DeleteObject(pen);
-    DeleteObject(penThick);
+    // Settings gear icon
+    if (id == BTN_SETTINGS) {
+        HPEN pen = CreatePen(PS_SOLID, 1, color);
+        HPEN oldPen = (HPEN)SelectObject(hdc, pen);
+        HBRUSH oldBrush = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+
+        const double PI = 3.14159265;
+        const int numTeeth = 6;
+        const int innerR = 5;
+        const int outerR = 8;
+
+        POINT gearPoints[24];
+        for (int i = 0; i < numTeeth; i++) {
+            double baseAngle = i * 2 * PI / numTeeth - PI / 2;
+            double toothWidth = PI / numTeeth * 0.6;
+
+            gearPoints[i * 4 + 0].x = cx + (int)(innerR * cos(baseAngle - toothWidth));
+            gearPoints[i * 4 + 0].y = cy + (int)(innerR * sin(baseAngle - toothWidth));
+            gearPoints[i * 4 + 1].x = cx + (int)(outerR * cos(baseAngle - toothWidth * 0.4));
+            gearPoints[i * 4 + 1].y = cy + (int)(outerR * sin(baseAngle - toothWidth * 0.4));
+            gearPoints[i * 4 + 2].x = cx + (int)(outerR * cos(baseAngle + toothWidth * 0.4));
+            gearPoints[i * 4 + 2].y = cy + (int)(outerR * sin(baseAngle + toothWidth * 0.4));
+            gearPoints[i * 4 + 3].x = cx + (int)(innerR * cos(baseAngle + toothWidth));
+            gearPoints[i * 4 + 3].y = cy + (int)(innerR * sin(baseAngle + toothWidth));
+        }
+
+        HBRUSH gearBrush = CreateSolidBrush(color);
+        HBRUSH oldFillBrush = (HBRUSH)SelectObject(hdc, gearBrush);
+        Polygon(hdc, gearPoints, 24);
+        SelectObject(hdc, oldFillBrush);
+        DeleteObject(gearBrush);
+
+        HBRUSH holeBrush = CreateSolidBrush(Colors::Surface);
+        SelectObject(hdc, holeBrush);
+        Ellipse(hdc, cx - 2, cy - 2, cx + 3, cy + 3);
+        DeleteObject(holeBrush);
+
+        SelectObject(hdc, oldBrush);
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
+    }
 }
 
 void DrawToolbarButton(HDC hdc, const ToolbarButton& btn, bool isHovered) {
