@@ -5,6 +5,7 @@
 bool InitializeD3D();
 bool CaptureScreen();
 bool SaveScreenshot(const RECT& region, const wchar_t* filename);
+void ReleaseCapturedTexture();
 HBITMAP CaptureScreenToBitmap();
 std::wstring GenerateAutoFilename();
 bool ShowSaveDialog(wchar_t* filepath, int maxLen);

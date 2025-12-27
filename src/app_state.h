@@ -50,6 +50,12 @@ struct AppState {
     // Overlay background
     HBITMAP overlayBitmap = nullptr;
 
+    // Cached overlay rendering resources (to avoid allocating on every paint)
+    HDC cachedOverlayDC = nullptr;
+    HBITMAP cachedDarkBitmap = nullptr;
+    int cachedWidth = 0;
+    int cachedHeight = 0;
+
     // Fonts
     HFONT fontRegular = nullptr;
     HFONT fontIcon = nullptr;

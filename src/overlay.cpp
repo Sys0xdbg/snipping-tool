@@ -48,6 +48,26 @@ void CacheWindowList() {
     EnumWindows(EnumWindowsCallback, 0);
 }
 
+// Free overlay-related resources to reduce memory usage
+void FreeOverlayResources() {
+    if (g_app.overlayBitmap) {
+        DeleteObject(g_app.overlayBitmap);
+        g_app.overlayBitmap = nullptr;
+    }
+    if (g_app.cachedDarkBitmap) {
+        DeleteObject(g_app.cachedDarkBitmap);
+        g_app.cachedDarkBitmap = nullptr;
+    }
+    if (g_app.cachedOverlayDC) {
+        DeleteDC(g_app.cachedOverlayDC);
+        g_app.cachedOverlayDC = nullptr;
+    }
+    g_app.cachedWidth = 0;
+    g_app.cachedHeight = 0;
+    g_app.windowList.clear();
+    g_app.windowList.shrink_to_fit();
+}
+
 HWND FindWindowAtPoint(POINT pt) {
     for (const auto& entry : g_app.windowList) {
         if (PtInRect(&entry.second, pt)) {
@@ -105,6 +125,9 @@ void HideOverlay() {
 
     g_app.hoveredWindow = nullptr;
     SetRectEmpty(&g_app.hoveredWindowRect);
+
+    // Free overlay resources to reduce memory when not in use
+    FreeOverlayResources();
 }
 
 void NormalizeRect(RECT& r) {
@@ -131,19 +154,26 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         HBITMAP oldSrcBitmap = (HBITMAP)SelectObject(srcDC, g_app.overlayBitmap);
         BitBlt(memDC, 0, 0, width, height, srcDC, 0, 0, SRCCOPY);
 
+        // Use cached dark overlay bitmap to avoid allocating on every paint
+        if (!g_app.cachedOverlayDC || g_app.cachedWidth != width || g_app.cachedHeight != height) {
+            // Free old cached resources if size changed
+            if (g_app.cachedDarkBitmap) DeleteObject(g_app.cachedDarkBitmap);
+            if (g_app.cachedOverlayDC) DeleteDC(g_app.cachedOverlayDC);
+
+            g_app.cachedOverlayDC = CreateCompatibleDC(hdc);
+            g_app.cachedDarkBitmap = CreateCompatibleBitmap(hdc, width, height);
+            SelectObject(g_app.cachedOverlayDC, g_app.cachedDarkBitmap);
+
+            HBRUSH darkBrush = CreateSolidBrush(RGB(0, 0, 0));
+            FillRect(g_app.cachedOverlayDC, &clientRect, darkBrush);
+            DeleteObject(darkBrush);
+
+            g_app.cachedWidth = width;
+            g_app.cachedHeight = height;
+        }
+
         BLENDFUNCTION blend = { AC_SRC_OVER, 0, 160, 0 };
-        HDC overlayDC = CreateCompatibleDC(hdc);
-        HBITMAP overlayBmp = CreateCompatibleBitmap(hdc, width, height);
-        SelectObject(overlayDC, overlayBmp);
-
-        HBRUSH darkBrush = CreateSolidBrush(RGB(0, 0, 0));
-        FillRect(overlayDC, &clientRect, darkBrush);
-        DeleteObject(darkBrush);
-
-        AlphaBlend(memDC, 0, 0, width, height, overlayDC, 0, 0, width, height, blend);
-
-        DeleteObject(overlayBmp);
-        DeleteDC(overlayDC);
+        AlphaBlend(memDC, 0, 0, width, height, g_app.cachedOverlayDC, 0, 0, width, height, blend);
 
         RECT sel = {};
         bool hasSelection = false;
@@ -223,17 +253,23 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
                 if (g_app.settings.autoSave) {
                     if (SaveScreenshot(captureRect, filepath)) {
+                        ReleaseCapturedTexture();
                         ShowNotification(filepath);
                     } else {
+                        ReleaseCapturedTexture();
                         MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                     }
                 } else {
                     if (ShowSaveDialog(filepath, MAX_PATH)) {
                         if (SaveScreenshot(captureRect, filepath)) {
+                            ReleaseCapturedTexture();
                             ShowNotification(filepath);
                         } else {
+                            ReleaseCapturedTexture();
                             MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                         }
+                    } else {
+                        ReleaseCapturedTexture();
                     }
                 }
             }
@@ -299,6 +335,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 if (g_app.captureMode == MODE_TEXT) {
                     // Perform OCR and copy text to clipboard
                     PerformOCR(g_app.selectionRect);
+                    ReleaseCapturedTexture();
                 } else {
                     // Regular screenshot
                     std::wstring autoPath = GenerateAutoFilename();
@@ -307,17 +344,23 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
                     if (g_app.settings.autoSave) {
                         if (SaveScreenshot(g_app.selectionRect, filepath)) {
+                            ReleaseCapturedTexture();
                             ShowNotification(filepath);
                         } else {
+                            ReleaseCapturedTexture();
                             MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                         }
                     } else {
                         if (ShowSaveDialog(filepath, MAX_PATH)) {
                             if (SaveScreenshot(g_app.selectionRect, filepath)) {
+                                ReleaseCapturedTexture();
                                 ShowNotification(filepath);
                             } else {
+                                ReleaseCapturedTexture();
                                 MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                             }
+                        } else {
+                            ReleaseCapturedTexture();
                         }
                     }
                 }
@@ -328,15 +371,18 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     case WM_KEYDOWN:
         if (wParam == VK_ESCAPE) {
             HideOverlay();
+            ReleaseCapturedTexture();
         }
         return 0;
 
     case WM_RBUTTONDOWN:
         HideOverlay();
+        ReleaseCapturedTexture();
         return 0;
 
     case WM_CLOSE:
         HideOverlay();
+        ReleaseCapturedTexture();
         return 0;
 
     case WM_ERASEBKGND:
@@ -378,17 +424,23 @@ void CaptureFullscreen() {
 
     if (g_app.settings.autoSave) {
         if (SaveScreenshot(fullscreen, filepath)) {
+            ReleaseCapturedTexture();
             ShowNotification(filepath);
         } else {
+            ReleaseCapturedTexture();
             MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
         }
     } else {
         if (ShowSaveDialog(filepath, MAX_PATH)) {
             if (SaveScreenshot(fullscreen, filepath)) {
+                ReleaseCapturedTexture();
                 ShowNotification(filepath);
             } else {
+                ReleaseCapturedTexture();
                 MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
             }
+        } else {
+            ReleaseCapturedTexture();
         }
     }
 }

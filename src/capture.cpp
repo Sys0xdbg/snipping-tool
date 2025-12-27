@@ -83,6 +83,11 @@ bool CaptureScreen() {
     return true;
 }
 
+// Release captured texture to free GPU memory
+void ReleaseCapturedTexture() {
+    g_app.capturedTexture.Reset();
+}
+
 bool SaveScreenshot(const RECT& region, const wchar_t* filename) {
     if (!g_app.capturedTexture) return false;
 
