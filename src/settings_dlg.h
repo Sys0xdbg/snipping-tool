@@ -22,9 +22,9 @@
 #define IDC_RUN_STARTUP         141
 
 // Settings window dimensions
-const int SETTINGS_WIDTH = 420;
+const int SETTINGS_WIDTH = 450;
 const int SETTINGS_HEIGHT = 700;
-const int SETTINGS_PADDING = 24;
+const int SETTINGS_PADDING = 12;
 const int SETTINGS_ROW_HEIGHT = 52;
 
 // Toggle IDs

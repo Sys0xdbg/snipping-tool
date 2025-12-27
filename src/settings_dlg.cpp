@@ -106,10 +106,23 @@ void DrawSettingsButton(HDC hdc, const RECT& rect, const wchar_t* text, bool isA
 
     DrawRoundedRect(hdc, rect, 4, bgColor, Colors::Border, 1);
 
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, textColor);
-    RECT textRect = rect;
-    DrawTextW(hdc, text, -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    // Use GDI+ for cleaner text rendering
+    Gdiplus::Graphics graphics(hdc);
+    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+
+    Gdiplus::FontFamily fontFamily(L"Segoe UI");
+    Gdiplus::Font font(&fontFamily, 11.0f, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+
+    Gdiplus::StringFormat format;
+    format.SetAlignment(Gdiplus::StringAlignmentCenter);
+    format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255, GetRValue(textColor), GetGValue(textColor), GetBValue(textColor)));
+    Gdiplus::RectF rectF((float)rect.left, (float)rect.top,
+                         (float)(rect.right - rect.left), (float)(rect.bottom - rect.top));
+
+    graphics.DrawString(text, -1, &font, rectF, &format, &brush);
 }
 
 void UpdateHotkeyDisplay(HWND hwnd, int editId, int recordId, const HotkeyConfig& hk, bool recording) {
@@ -286,18 +299,10 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
     case WM_PAINT: {
         PAINTSTRUCT ps;
-        HDC hdcScreen = BeginPaint(hwnd, &ps);
+        HDC hdc = BeginPaint(hwnd, &ps);
 
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
-
-        HDC hdc = CreateCompatibleDC(hdcScreen);
-        HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, clientRect.right, clientRect.bottom);
-        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdc, hBitmap);
-
-        HBRUSH bgBrush = CreateSolidBrush(Colors::Background);
-        FillRect(hdc, &clientRect, bgBrush);
-        DeleteObject(bgBrush);
 
         int y = SETTINGS_PADDING;
         int contentWidth = SETTINGS_WIDTH - SETTINGS_PADDING * 2;
@@ -394,12 +399,6 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         DrawSettingsButton(hdc, g_settingsBtns[5].rect, L"Save", true, g_hoveredBtn == BTN_SAVE_SETTINGS);
         DrawSettingsButton(hdc, g_settingsBtns[6].rect, L"Cancel", false, g_hoveredBtn == BTN_CANCEL_SETTINGS);
 
-        BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
-
-        SelectObject(hdc, hOldBitmap);
-        DeleteObject(hBitmap);
-        DeleteDC(hdc);
-
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -430,9 +429,26 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         }
 
         if (newHoveredBtn != g_hoveredBtn || newHoveredToggle != g_hoveredToggle) {
+            // Invalidate old button
+            if (g_hoveredBtn != 0) {
+                for (int i = 0; i < 7; i++) {
+                    if (g_settingsBtns[i].id == g_hoveredBtn) {
+                        InvalidateRect(hwnd, &g_settingsBtns[i].rect, FALSE);
+                        break;
+                    }
+                }
+            }
+            // Invalidate new button
+            if (newHoveredBtn != 0) {
+                for (int i = 0; i < 7; i++) {
+                    if (g_settingsBtns[i].id == newHoveredBtn) {
+                        InvalidateRect(hwnd, &g_settingsBtns[i].rect, FALSE);
+                        break;
+                    }
+                }
+            }
             g_hoveredBtn = newHoveredBtn;
             g_hoveredToggle = newHoveredToggle;
-            InvalidateRect(hwnd, nullptr, FALSE);
         }
 
         TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
@@ -441,9 +457,16 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
 
     case WM_MOUSELEAVE:
+        if (g_hoveredBtn != 0) {
+            for (int i = 0; i < 7; i++) {
+                if (g_settingsBtns[i].id == g_hoveredBtn) {
+                    InvalidateRect(hwnd, &g_settingsBtns[i].rect, FALSE);
+                    break;
+                }
+            }
+        }
         g_hoveredBtn = 0;
         g_hoveredToggle = 0;
-        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
     case WM_LBUTTONDOWN: {
@@ -472,19 +495,19 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
                 }
                 case BTN_RECORD_RECT:
                     g_app.recordingHotkeyType = (g_app.recordingHotkeyType == 1) ? 0 : 1;
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    InvalidateRect(hwnd, &g_settingsBtns[1].rect, FALSE);
                     break;
                 case BTN_RECORD_WIN:
                     g_app.recordingHotkeyType = (g_app.recordingHotkeyType == 2) ? 0 : 2;
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    InvalidateRect(hwnd, &g_settingsBtns[2].rect, FALSE);
                     break;
                 case BTN_RECORD_FULL:
                     g_app.recordingHotkeyType = (g_app.recordingHotkeyType == 3) ? 0 : 3;
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    InvalidateRect(hwnd, &g_settingsBtns[3].rect, FALSE);
                     break;
                 case BTN_RECORD_TEXT:
                     g_app.recordingHotkeyType = (g_app.recordingHotkeyType == 4) ? 0 : 4;
-                    InvalidateRect(hwnd, nullptr, FALSE);
+                    InvalidateRect(hwnd, &g_settingsBtns[4].rect, FALSE);
                     break;
                 case BTN_SAVE_SETTINGS: {
                     wchar_t path[MAX_PATH];
@@ -523,13 +546,42 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
         int toggleX = SETTINGS_WIDTH - SETTINGS_PADDING - 56;
         if (x >= toggleX && x <= toggleX + 50) {
-            if (y >= 130 && y < 130 + SETTINGS_ROW_HEIGHT) { g_tempAutoSave = !g_tempAutoSave; InvalidateRect(hwnd, nullptr, FALSE); }
-            else if (y >= 222 && y < 222 + SETTINGS_ROW_HEIGHT) { g_tempRectEnabled = !g_tempRectEnabled; InvalidateRect(hwnd, nullptr, FALSE); }
-            else if (y >= 278 && y < 278 + SETTINGS_ROW_HEIGHT) { g_tempWinEnabled = !g_tempWinEnabled; InvalidateRect(hwnd, nullptr, FALSE); }
-            else if (y >= 334 && y < 334 + SETTINGS_ROW_HEIGHT) { g_tempFullEnabled = !g_tempFullEnabled; InvalidateRect(hwnd, nullptr, FALSE); }
-            else if (y >= 390 && y < 390 + SETTINGS_ROW_HEIGHT) { g_tempTextEnabled = !g_tempTextEnabled; InvalidateRect(hwnd, nullptr, FALSE); }
-            else if (y >= 482 && y < 482 + SETTINGS_ROW_HEIGHT) { g_tempReplaceWin = !g_tempReplaceWin; InvalidateRect(hwnd, nullptr, FALSE); }
-            else if (y >= 538 && y < 538 + SETTINGS_ROW_HEIGHT) { g_tempStartup = !g_tempStartup; InvalidateRect(hwnd, nullptr, FALSE); }
+            RECT toggleRect = { toggleX, 0, toggleX + 50, 0 };
+            if (y >= 130 && y < 130 + SETTINGS_ROW_HEIGHT) {
+                g_tempAutoSave = !g_tempAutoSave;
+                toggleRect.top = 130; toggleRect.bottom = 130 + SETTINGS_ROW_HEIGHT;
+                InvalidateRect(hwnd, &toggleRect, FALSE);
+            }
+            else if (y >= 222 && y < 222 + SETTINGS_ROW_HEIGHT) {
+                g_tempRectEnabled = !g_tempRectEnabled;
+                toggleRect.top = 222; toggleRect.bottom = 222 + SETTINGS_ROW_HEIGHT;
+                InvalidateRect(hwnd, &toggleRect, FALSE);
+            }
+            else if (y >= 278 && y < 278 + SETTINGS_ROW_HEIGHT) {
+                g_tempWinEnabled = !g_tempWinEnabled;
+                toggleRect.top = 278; toggleRect.bottom = 278 + SETTINGS_ROW_HEIGHT;
+                InvalidateRect(hwnd, &toggleRect, FALSE);
+            }
+            else if (y >= 334 && y < 334 + SETTINGS_ROW_HEIGHT) {
+                g_tempFullEnabled = !g_tempFullEnabled;
+                toggleRect.top = 334; toggleRect.bottom = 334 + SETTINGS_ROW_HEIGHT;
+                InvalidateRect(hwnd, &toggleRect, FALSE);
+            }
+            else if (y >= 390 && y < 390 + SETTINGS_ROW_HEIGHT) {
+                g_tempTextEnabled = !g_tempTextEnabled;
+                toggleRect.top = 390; toggleRect.bottom = 390 + SETTINGS_ROW_HEIGHT;
+                InvalidateRect(hwnd, &toggleRect, FALSE);
+            }
+            else if (y >= 482 && y < 482 + SETTINGS_ROW_HEIGHT) {
+                g_tempReplaceWin = !g_tempReplaceWin;
+                toggleRect.top = 482; toggleRect.bottom = 482 + SETTINGS_ROW_HEIGHT;
+                InvalidateRect(hwnd, &toggleRect, FALSE);
+            }
+            else if (y >= 538 && y < 538 + SETTINGS_ROW_HEIGHT) {
+                g_tempStartup = !g_tempStartup;
+                toggleRect.top = 538; toggleRect.bottom = 538 + SETTINGS_ROW_HEIGHT;
+                InvalidateRect(hwnd, &toggleRect, FALSE);
+            }
         }
         return 0;
     }
@@ -550,15 +602,21 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
             HotkeyConfig newHotkey = { mods, vk, true };
 
+            int btnIndex = 0;
             switch (g_app.recordingHotkeyType) {
-            case 1: g_tempHotkeyRect = newHotkey; break;
-            case 2: g_tempHotkeyWindow = newHotkey; break;
-            case 3: g_tempHotkeyFullscreen = newHotkey; break;
-            case 4: g_tempHotkeyText = newHotkey; break;
+            case 1: g_tempHotkeyRect = newHotkey; btnIndex = 1; break;
+            case 2: g_tempHotkeyWindow = newHotkey; btnIndex = 2; break;
+            case 3: g_tempHotkeyFullscreen = newHotkey; btnIndex = 3; break;
+            case 4: g_tempHotkeyText = newHotkey; btnIndex = 4; break;
             }
 
             g_app.recordingHotkeyType = 0;
-            InvalidateRect(hwnd, nullptr, FALSE);
+            if (btnIndex > 0) {
+                // Invalidate the hotkey row area (button + hotkey text)
+                RECT rowRect = g_settingsBtns[btnIndex].rect;
+                rowRect.left = SETTINGS_PADDING;
+                InvalidateRect(hwnd, &rowRect, FALSE);
+            }
             return 0;
         }
         if (wParam == VK_ESCAPE) {
@@ -567,8 +625,15 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         }
         break;
 
-    case WM_ERASEBKGND:
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wParam;
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        HBRUSH brush = CreateSolidBrush(RGB(0, 0, 0));
+        FillRect(hdc, &rc, brush);
+        DeleteObject(brush);
         return 1;
+    }
 
     case WM_CTLCOLOREDIT: {
         HDC hdcEdit = (HDC)wParam;
@@ -634,6 +699,17 @@ void ShowSettingsDialog(HWND parent) {
     );
 
     EnableDarkMode(g_settings.hwnd);
+
+    // Enable Mica blur effect (Windows 11 22H2+)
+    enum { DWMWA_SYSTEMBACKDROP_TYPE = 38 };
+    enum { DWMSBT_MAINWINDOW = 2 };  // Mica
+    int backdropType = DWMSBT_MAINWINDOW;
+    DwmSetWindowAttribute(g_settings.hwnd, DWMWA_SYSTEMBACKDROP_TYPE, &backdropType, sizeof(backdropType));
+
+    // Extend frame into client area for blur
+    MARGINS margins = { -1, -1, -1, -1 };
+    DwmExtendFrameIntoClientArea(g_settings.hwnd, &margins);
+
     ShowWindow(g_settings.hwnd, SW_SHOW);
 
     EnableWindow(parent, FALSE);
