@@ -112,7 +112,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         DeleteObject(bgBrush);
 
         for (int i = 0; i < NUM_BUTTONS; i++) {
-            if (i == 3) {
+            if (i == 4) {  // Delay button is now at index 4
                 DrawDelayDropdown(hdc, g_buttons[i].rect, g_app.hoveredButton == g_buttons[i].id);
             } else {
                 DrawToolbarButton(hdc, g_buttons[i], g_app.hoveredButton == g_buttons[i].id);
@@ -121,7 +121,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         HPEN divPen = CreatePen(PS_SOLID, 1, Colors::Divider);
         HPEN oldPen = (HPEN)SelectObject(hdc, divPen);
-        int divX = g_buttons[2].rect.right + 6;
+        int divX = g_buttons[3].rect.right + 6;  // Divider after Text button (index 3)
         int divTop = TOOLBAR_HEIGHT / 2 - 10;
         int divBottom = TOOLBAR_HEIGHT / 2 + 10;
         MoveToEx(hdc, divX, divTop, nullptr);
@@ -193,6 +193,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     g_buttons[0].isActive = true;
                     g_buttons[1].isActive = false;
                     g_buttons[2].isActive = false;
+                    g_buttons[3].isActive = false;
                     StartCapture();
                     break;
                 case BTN_MODE_WINDOW:
@@ -200,6 +201,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     g_buttons[0].isActive = false;
                     g_buttons[1].isActive = true;
                     g_buttons[2].isActive = false;
+                    g_buttons[3].isActive = false;
                     StartCapture();
                     break;
                 case BTN_MODE_FULLSCREEN:
@@ -207,6 +209,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     g_buttons[0].isActive = false;
                     g_buttons[1].isActive = false;
                     g_buttons[2].isActive = true;
+                    g_buttons[3].isActive = false;
+                    StartCapture();
+                    break;
+                case BTN_MODE_TEXT:
+                    g_app.captureMode = MODE_TEXT;
+                    g_buttons[0].isActive = false;
+                    g_buttons[1].isActive = false;
+                    g_buttons[2].isActive = false;
+                    g_buttons[3].isActive = true;
                     StartCapture();
                     break;
                 case BTN_DELAY:

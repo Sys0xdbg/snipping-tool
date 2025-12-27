@@ -4,6 +4,7 @@
 #include "notification.h"
 #include "drawing.h"
 #include "tooltip.h"
+#include "ocr.h"
 
 RECT GetWindowVisibleRect(HWND hwnd) {
     RECT rect = {};
@@ -180,9 +181,14 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SetTextColor(memDC, Colors::Text);
         HFONT oldFont = (HFONT)SelectObject(memDC, g_app.fontRegular);
 
-        const wchar_t* text = (g_app.captureMode == MODE_WINDOW)
-            ? L"Click on a window to capture it  -  Press ESC to cancel"
-            : L"Click and drag to select area  -  Press ESC to cancel";
+        const wchar_t* text;
+        if (g_app.captureMode == MODE_WINDOW) {
+            text = L"Click on a window to capture it  -  Press ESC to cancel";
+        } else if (g_app.captureMode == MODE_TEXT) {
+            text = L"Select text area to copy  -  Press ESC to cancel";
+        } else {
+            text = L"Click and drag to select area  -  Press ESC to cancel";
+        }
         RECT textRect = { 0, 20, width, 50 };
         DrawTextW(memDC, text, -1, &textRect, DT_CENTER | DT_SINGLELINE);
         SelectObject(memDC, oldFont);
@@ -268,7 +274,7 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
 
     case WM_LBUTTONUP:
-        if (g_app.captureMode == MODE_RECTANGLE && g_app.isSelecting) {
+        if ((g_app.captureMode == MODE_RECTANGLE || g_app.captureMode == MODE_TEXT) && g_app.isSelecting) {
             g_app.isSelecting = false;
             g_app.endPoint.x = GET_X_LPARAM(lParam);
             g_app.endPoint.y = GET_Y_LPARAM(lParam);
@@ -282,22 +288,28 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
             if (w > 5 && h > 5) {
                 HideOverlay();
 
-                std::wstring autoPath = GenerateAutoFilename();
-                wchar_t filepath[MAX_PATH];
-                wcscpy_s(filepath, autoPath.c_str());
-
-                if (g_app.settings.autoSave) {
-                    if (SaveScreenshot(g_app.selectionRect, filepath)) {
-                        ShowNotification(filepath);
-                    } else {
-                        MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
-                    }
+                if (g_app.captureMode == MODE_TEXT) {
+                    // Perform OCR and copy text to clipboard
+                    PerformOCR(g_app.selectionRect);
                 } else {
-                    if (ShowSaveDialog(filepath, MAX_PATH)) {
+                    // Regular screenshot
+                    std::wstring autoPath = GenerateAutoFilename();
+                    wchar_t filepath[MAX_PATH];
+                    wcscpy_s(filepath, autoPath.c_str());
+
+                    if (g_app.settings.autoSave) {
                         if (SaveScreenshot(g_app.selectionRect, filepath)) {
                             ShowNotification(filepath);
                         } else {
                             MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
+                        }
+                    } else {
+                        if (ShowSaveDialog(filepath, MAX_PATH)) {
+                            if (SaveScreenshot(g_app.selectionRect, filepath)) {
+                                ShowNotification(filepath);
+                            } else {
+                                MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
+                            }
                         }
                     }
                 }
@@ -373,6 +385,7 @@ void StartCapture() {
     switch (g_app.captureMode) {
     case MODE_RECTANGLE:
     case MODE_WINDOW:
+    case MODE_TEXT:
         ShowOverlay();
         break;
     case MODE_FULLSCREEN:

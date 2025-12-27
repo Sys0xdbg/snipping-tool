@@ -14,6 +14,7 @@ ToolbarButton g_buttons[] = {
     { BTN_MODE_RECT, L"Rectangle", L"Capture a rectangular region", {}, true, true },
     { BTN_MODE_WINDOW, L"Window", L"Capture a window", {}, true, false },
     { BTN_MODE_FULLSCREEN, L"Fullscreen", L"Capture entire screen", {}, true, false },
+    { BTN_MODE_TEXT, L"Text", L"Capture text from screen (OCR)", {}, true, false },
     { BTN_DELAY, L"Delay", L"Set a timer before capture starts", {}, false, false },
     { BTN_SETTINGS, L"Settings", L"Configure hotkeys and preferences", {}, false, false },
 };

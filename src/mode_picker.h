@@ -3,9 +3,10 @@
 #include "common.h"
 
 // Mode picker constants
-const int MODE_PICKER_WIDTH = 280;
+const int MODE_PICKER_WIDTH = 330;
 const int MODE_PICKER_HEIGHT = 80;
 const int MODE_PICKER_BTN_SIZE = 40;
+const int MODE_PICKER_NUM_BTNS = 5;
 
 struct ModePickerBtn {
     int mode;

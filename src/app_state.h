@@ -83,6 +83,7 @@ enum ButtonID {
     BTN_MODE_RECT = 1,
     BTN_MODE_WINDOW,
     BTN_MODE_FULLSCREEN,
+    BTN_MODE_TEXT,
     BTN_DELAY,
     BTN_SETTINGS
 };

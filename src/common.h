@@ -39,7 +39,8 @@ using Microsoft::WRL::ComPtr;
 enum CaptureMode {
     MODE_RECTANGLE = 0,
     MODE_WINDOW,
-    MODE_FULLSCREEN
+    MODE_FULLSCREEN,
+    MODE_TEXT
 };
 
 // Colors - Modern Windows 11 style
@@ -69,7 +70,7 @@ namespace Colors {
 const int TOOLBAR_HEIGHT = 48;
 const int BUTTON_SIZE = 36;
 const int BUTTON_MARGIN = 6;
-const int WINDOW_WIDTH = 340;
+const int WINDOW_WIDTH = 390;
 const int WINDOW_HEIGHT = 56;
 
 // Hotkey structure

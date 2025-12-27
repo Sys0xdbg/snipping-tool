@@ -22,8 +22,12 @@ add_executable(snip WIN32
     src/mode_picker.cpp
     src/settings_dlg.cpp
     src/main_window.cpp
+    src/ocr.cpp
     src/resources.rc
 )
+
+# C++/WinRT for OCR support
+target_compile_options(snip PRIVATE /await)
 
 # Link Windows libraries
 target_link_libraries(snip PRIVATE
@@ -34,6 +38,8 @@ target_link_libraries(snip PRIVATE
     msimg32
     dwmapi
     uxtheme
+    windowsapp
+    shcore
 )
 
 # Installation

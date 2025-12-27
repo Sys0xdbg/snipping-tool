@@ -25,8 +25,17 @@ extern int g_notifAnimStep;
 extern int g_notifTargetX;
 extern int g_notifStartX;
 extern bool g_notifClosing;
+extern bool g_notifIsText;
+extern std::wstring g_notifTitle;
+extern std::wstring g_notifMessage;
+extern bool g_notifIsError;
+
+// Text notification dimensions
+#define TEXT_NOTIF_WIDTH 300
+#define TEXT_NOTIF_HEIGHT 70
 
 HBITMAP CreatePreviewBitmap(const wchar_t* filepath, int width, int height);
 LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 void ShowNotification(const wchar_t* filepath);
+void ShowTextNotification(const wchar_t* title, const wchar_t* message, bool isError = false);
 void HideNotification();

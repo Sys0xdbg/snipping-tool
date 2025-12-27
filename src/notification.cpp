@@ -6,6 +6,10 @@ int g_notifAnimStep = 0;
 int g_notifTargetX = 0;
 int g_notifStartX = 0;
 bool g_notifClosing = false;
+bool g_notifIsText = false;
+std::wstring g_notifTitle;
+std::wstring g_notifMessage;
+bool g_notifIsError = false;
 
 HBITMAP CreatePreviewBitmap(const wchar_t* filepath, int width, int height) {
     Gdiplus::Bitmap* original = Gdiplus::Bitmap::FromFile(filepath);
@@ -70,6 +74,26 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 
         Gdiplus::FontFamily fontFamily(L"Segoe UI");
         Gdiplus::SolidBrush textBrush(Gdiplus::Color(255, 255, 255, 255));
+
+        // Handle text-only notification
+        if (g_notifIsText) {
+            Gdiplus::Color titleColor = g_notifIsError
+                ? Gdiplus::Color(255, 255, 100, 100)
+                : Gdiplus::Color(255, 100, 200, 100);
+            Gdiplus::SolidBrush titleBrush(titleColor);
+            Gdiplus::Font titleFont(&fontFamily, 12, Gdiplus::FontStyleBold);
+            graphics.DrawString(g_notifTitle.c_str(), -1, &titleFont, Gdiplus::PointF(16.0f, 14.0f), &titleBrush);
+
+            Gdiplus::Font msgFont(&fontFamily, 10, Gdiplus::FontStyleRegular);
+            graphics.DrawString(g_notifMessage.c_str(), -1, &msgFont, Gdiplus::PointF(16.0f, 38.0f), &textBrush);
+
+            BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
+            SelectObject(hdc, hOldBitmap);
+            DeleteObject(hBitmap);
+            DeleteDC(hdc);
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
 
         Gdiplus::Font titleFont(&fontFamily, 12, Gdiplus::FontStyleBold);
         graphics.DrawString(L"Screenshot saved", -1, &titleFont, Gdiplus::PointF(16.0f, 12.0f), &textBrush);
@@ -266,6 +290,7 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 }
 
 void ShowNotification(const wchar_t* filepath) {
+    g_notifIsText = false;  // Reset text notification flag
     g_app.lastScreenshotPath = filepath;
 
     if (g_app.notificationPreview) {
@@ -328,4 +353,54 @@ void HideNotification() {
         g_notifTargetX = GetSystemMetrics(SM_CXSCREEN) + 10;
         SetTimer(g_app.notificationWnd, NOTIF_ANIM_TIMER_ID, NOTIF_ANIM_DURATION / NOTIF_ANIM_STEPS, nullptr);
     }
+}
+
+void ShowTextNotification(const wchar_t* title, const wchar_t* message, bool isError) {
+    g_notifIsText = true;
+    g_notifTitle = title;
+    g_notifMessage = message;
+    g_notifIsError = isError;
+
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = NotificationWndProc;
+        wc.hInstance = g_app.hInstance;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.lpszClassName = L"SnippingToolNotification";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+
+    if (g_app.notificationWnd) {
+        KillTimer(g_app.notificationWnd, NOTIF_TIMER_ID);
+        KillTimer(g_app.notificationWnd, NOTIF_ANIM_TIMER_ID);
+        DestroyWindow(g_app.notificationWnd);
+        g_app.notificationWnd = nullptr;
+    }
+
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    g_notifTargetX = screenWidth - TEXT_NOTIF_WIDTH - 20;
+    g_notifStartX = screenWidth + 10;
+    int y = screenHeight - TEXT_NOTIF_HEIGHT - 60;
+
+    g_app.notificationHovered = -1;
+    g_notifAnimStep = 0;
+    g_notifClosing = false;
+
+    g_app.notificationWnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        L"SnippingToolNotification", L"",
+        WS_POPUP,
+        g_notifStartX, y, TEXT_NOTIF_WIDTH, TEXT_NOTIF_HEIGHT,
+        nullptr, nullptr, g_app.hInstance, nullptr
+    );
+
+    SetLayeredWindowAttributes(g_app.notificationWnd, 0, 255, LWA_ALPHA);
+    ShowWindow(g_app.notificationWnd, SW_SHOWNOACTIVATE);
+
+    SetTimer(g_app.notificationWnd, NOTIF_ANIM_TIMER_ID, NOTIF_ANIM_DURATION / NOTIF_ANIM_STEPS, nullptr);
+    SetTimer(g_app.notificationWnd, NOTIF_TIMER_ID, 3000, nullptr);  // 3 second duration for text notifications
 }

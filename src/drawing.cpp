@@ -60,6 +60,19 @@ void DrawIcon(HDC hdc, int id, const RECT& rect, COLORREF color) {
         LineTo(hdc, cx + 3, cy + 4);
         break;
     }
+    case BTN_MODE_TEXT: {
+        // Draw "T" for text/OCR
+        SelectObject(hdc, penThick);
+        MoveToEx(hdc, cx - 6, cy - 6, nullptr);
+        LineTo(hdc, cx + 7, cy - 6);
+        MoveToEx(hdc, cx, cy - 6, nullptr);
+        LineTo(hdc, cx, cy + 7);
+        // Serifs
+        SelectObject(hdc, pen);
+        MoveToEx(hdc, cx - 3, cy + 7, nullptr);
+        LineTo(hdc, cx + 4, cy + 7);
+        break;
+    }
     case BTN_SETTINGS: {
         SelectObject(hdc, penThick);
         Ellipse(hdc, cx - 3, cy - 3, cx + 4, cy + 4);
@@ -147,15 +160,18 @@ void UpdateButtonRects() {
     int x = 12;
     int y = (TOOLBAR_HEIGHT - BUTTON_SIZE) / 2;
 
-    for (int i = 0; i <= 2; i++) {
+    // Mode buttons: Rectangle, Window, Fullscreen, Text (indices 0-3)
+    for (int i = 0; i <= 3; i++) {
         g_buttons[i].rect = { x, y, x + BUTTON_SIZE, y + BUTTON_SIZE };
         x += BUTTON_SIZE + 4;
     }
 
     x += 12;
 
-    g_buttons[3].rect = { x, y, x + 70, y + BUTTON_SIZE };
+    // Delay dropdown (index 4)
+    g_buttons[4].rect = { x, y, x + 70, y + BUTTON_SIZE };
     x += 70 + 12;
 
-    g_buttons[4].rect = { x, y, x + BUTTON_SIZE, y + BUTTON_SIZE };
+    // Settings button (index 5)
+    g_buttons[5].rect = { x, y, x + BUTTON_SIZE, y + BUTTON_SIZE };
 }

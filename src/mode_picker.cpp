@@ -7,6 +7,7 @@ ModePickerBtn g_modePickerBtns[] = {
     { MODE_RECTANGLE, L"\u25AD", L"Rectangle", L"Draw a rectangle to capture a region", {} },
     { MODE_WINDOW, L"\u2750", L"Window", L"Click a window to capture it", {} },
     { MODE_FULLSCREEN, L"\u2B1C", L"Fullscreen", L"Capture the entire screen", {} },
+    { MODE_TEXT, L"\u2131", L"Text", L"Copy text from screen (OCR)", {} },
     { -1, L"\u2715", L"Close", L"Cancel screenshot", {} },
 };
 
@@ -55,7 +56,7 @@ LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         int x = 16;
         int btnY = 10;
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < MODE_PICKER_NUM_BTNS; i++) {
             g_modePickerBtns[i].rect = { x, btnY, x + MODE_PICKER_BTN_SIZE, btnY + MODE_PICKER_BTN_SIZE };
 
             bool isHovered = (g_app.modePickerHovered == i);
@@ -66,11 +67,26 @@ LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
                     (float)(MODE_PICKER_BTN_SIZE - 4), (float)(MODE_PICKER_BTN_SIZE - 4));
             }
 
-            Gdiplus::SolidBrush iconBrush(i == 3 ? Gdiplus::Color(255, 200, 200, 200) : Gdiplus::Color(255, 255, 255, 255));
+            Gdiplus::SolidBrush iconBrush(i == 4 ? Gdiplus::Color(255, 200, 200, 200) : Gdiplus::Color(255, 255, 255, 255));
             Gdiplus::RectF iconRect((float)x, (float)btnY, (float)MODE_PICKER_BTN_SIZE, (float)MODE_PICKER_BTN_SIZE);
-            graphics.DrawString(g_modePickerBtns[i].icon, -1, &iconFont, iconRect, &centerFormat, &iconBrush);
 
-            if (i == 2) {
+            // Draw custom "T" icon for text mode (index 3)
+            if (i == 3) {
+                int cx = x + MODE_PICKER_BTN_SIZE / 2;
+                int cy = btnY + MODE_PICKER_BTN_SIZE / 2;
+                Gdiplus::Pen thickPen(Gdiplus::Color(255, 255, 255, 255), 2.0f);
+                Gdiplus::Pen thinPen(Gdiplus::Color(255, 255, 255, 255), 1.0f);
+                // Top horizontal line of T
+                graphics.DrawLine(&thickPen, cx - 7, cy - 7, cx + 8, cy - 7);
+                // Vertical stem of T
+                graphics.DrawLine(&thickPen, cx, cy - 7, cx, cy + 8);
+                // Bottom serif
+                graphics.DrawLine(&thinPen, cx - 4, cy + 8, cx + 5, cy + 8);
+            } else {
+                graphics.DrawString(g_modePickerBtns[i].icon, -1, &iconFont, iconRect, &centerFormat, &iconBrush);
+            }
+
+            if (i == 3) {
                 Gdiplus::Pen divPen(Gdiplus::Color(255, 80, 80, 80), 1.0f);
                 graphics.DrawLine(&divPen, x + MODE_PICKER_BTN_SIZE + 10, btnY + 8,
                     x + MODE_PICKER_BTN_SIZE + 10, btnY + MODE_PICKER_BTN_SIZE - 8);
@@ -80,7 +96,7 @@ LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
             x += MODE_PICKER_BTN_SIZE + 8;
         }
 
-        if (g_app.modePickerHovered >= 0 && g_app.modePickerHovered < 4) {
+        if (g_app.modePickerHovered >= 0 && g_app.modePickerHovered < MODE_PICKER_NUM_BTNS) {
             Gdiplus::SolidBrush descBrush(Gdiplus::Color(255, 180, 180, 180));
             Gdiplus::RectF descRect(8.0f, (float)(btnY + MODE_PICKER_BTN_SIZE + 4),
                 (float)(clientRect.right - 16), 20.0f);
@@ -104,7 +120,7 @@ LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         POINT pt = { x, y };
 
         int newHovered = -1;
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < MODE_PICKER_NUM_BTNS; i++) {
             if (PtInRect(&g_modePickerBtns[i].rect, pt)) {
                 newHovered = i;
                 break;
@@ -131,7 +147,7 @@ LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         int y = GET_Y_LPARAM(lParam);
         POINT pt = { x, y };
 
-        for (int i = 0; i < 4; i++) {
+        for (int i = 0; i < MODE_PICKER_NUM_BTNS; i++) {
             if (PtInRect(&g_modePickerBtns[i].rect, pt)) {
                 if (g_modePickerBtns[i].mode >= 0) {
                     g_app.modePickerWnd = nullptr;
