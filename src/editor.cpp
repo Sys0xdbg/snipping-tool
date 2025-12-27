@@ -212,19 +212,6 @@ POINT CanvasToScreen(EditorState* state, POINT canvasPt) {
     return screenPt;
 }
 
-// Tool names for tooltips
-static const wchar_t* TOOL_NAMES[] = {
-    L"Select (1)",
-    L"Arrow (2)",
-    L"Rectangle (3)",
-    L"Ellipse (4)",
-    L"Pen (5)",
-    L"Highlighter (6)",
-    L"Text (7)",
-    L"Blur (8)",
-    L"Crop (9)"
-};
-
 // Crop handle indices:
 // 0=TopLeft, 1=TopCenter, 2=TopRight
 // 3=MiddleLeft, 4=MiddleRight
@@ -443,17 +430,19 @@ void TextObject::Draw(Gdiplus::Graphics& g, float zoom, POINT offset) {
     Gdiplus::Font font(&family, fontSize * zoom, bold ? Gdiplus::FontStyleBold : Gdiplus::FontStyleRegular);
     Gdiplus::SolidBrush brush(color);
 
-    float x = position.x * zoom + offset.x;
-    float y = position.y * zoom + offset.y;
+    float x = bounds.left * zoom + offset.x;
+    float y = bounds.top * zoom + offset.y;
+    float w = (bounds.right - bounds.left) * zoom;
+    float h = (bounds.bottom - bounds.top) * zoom;
 
-    g.DrawString(text.c_str(), -1, &font, Gdiplus::PointF(x, y), &brush);
-}
+    // Draw text with word wrapping within the bounds
+    Gdiplus::RectF layoutRect(x, y, w, h);
+    Gdiplus::StringFormat format;
+    format.SetAlignment(Gdiplus::StringAlignmentNear);
+    format.SetLineAlignment(Gdiplus::StringAlignmentNear);
+    format.SetTrimming(Gdiplus::StringTrimmingNone);
 
-RECT TextObject::GetBounds() const {
-    // Approximate bounds
-    int w = (int)(text.length() * fontSize * 0.6f);
-    int h = (int)(fontSize * 1.2f);
-    return { position.x, position.y, position.x + w, position.y + h };
+    g.DrawString(text.c_str(), -1, &font, layoutRect, &format, &brush);
 }
 
 void BlurRegion::Draw(Gdiplus::Graphics& g, float zoom, POINT offset) {
@@ -507,6 +496,70 @@ void ArrowObject::Move(int dx, int dy) {
 
 void ArrowObject::SetBounds(const RECT& newBounds) {
     RECT oldBounds = GetBounds();
+    float scaleX = (float)(newBounds.right - newBounds.left) / (float)(oldBounds.right - oldBounds.left);
+    float scaleY = (float)(newBounds.bottom - newBounds.top) / (float)(oldBounds.bottom - oldBounds.top);
+
+    start.x = newBounds.left + (LONG)((start.x - oldBounds.left) * scaleX);
+    start.y = newBounds.top + (LONG)((start.y - oldBounds.top) * scaleY);
+    end.x = newBounds.left + (LONG)((end.x - oldBounds.left) * scaleX);
+    end.y = newBounds.top + (LONG)((end.y - oldBounds.top) * scaleY);
+}
+
+// Line drawing
+void LineObject::Draw(Gdiplus::Graphics& g, float zoom, POINT offset) {
+    Gdiplus::Pen pen(color, thickness * zoom);
+    pen.SetStartCap(Gdiplus::LineCapRound);
+    pen.SetEndCap(Gdiplus::LineCapRound);
+
+    float x1 = start.x * zoom + offset.x;
+    float y1 = start.y * zoom + offset.y;
+    float x2 = end.x * zoom + offset.x;
+    float y2 = end.y * zoom + offset.y;
+
+    g.DrawLine(&pen, x1, y1, x2, y2);
+}
+
+RECT LineObject::GetBounds() const {
+    RECT r;
+    int pad = (int)(thickness / 2) + 2;
+    r.left = (std::min)(start.x, end.x) - pad;
+    r.top = (std::min)(start.y, end.y) - pad;
+    r.right = (std::max)(start.x, end.x) + pad;
+    r.bottom = (std::max)(start.y, end.y) + pad;
+    return r;
+}
+
+bool LineObject::HitTest(POINT pt) const {
+    float tolerance = thickness + 5;
+    float dx = (float)(end.x - start.x);
+    float dy = (float)(end.y - start.y);
+    float len2 = dx * dx + dy * dy;
+
+    if (len2 == 0) {
+        float dist = sqrtf((float)((pt.x - start.x) * (pt.x - start.x) + (pt.y - start.y) * (pt.y - start.y)));
+        return dist <= tolerance;
+    }
+
+    float t = (std::max)(0.0f, (std::min)(1.0f, ((pt.x - start.x) * dx + (pt.y - start.y) * dy) / len2));
+    float projX = start.x + t * dx;
+    float projY = start.y + t * dy;
+    float dist = sqrtf((pt.x - projX) * (pt.x - projX) + (pt.y - projY) * (pt.y - projY));
+
+    return dist <= tolerance;
+}
+
+void LineObject::Move(int dx, int dy) {
+    start.x += dx;
+    start.y += dy;
+    end.x += dx;
+    end.y += dy;
+}
+
+void LineObject::SetBounds(const RECT& newBounds) {
+    RECT oldBounds = GetBounds();
+    if (oldBounds.right == oldBounds.left) oldBounds.right = oldBounds.left + 1;
+    if (oldBounds.bottom == oldBounds.top) oldBounds.bottom = oldBounds.top + 1;
+
     float scaleX = (float)(newBounds.right - newBounds.left) / (float)(oldBounds.right - oldBounds.left);
     float scaleY = (float)(newBounds.bottom - newBounds.top) / (float)(oldBounds.bottom - oldBounds.top);
 
@@ -608,29 +661,19 @@ void PathObject::SetBounds(const RECT& newBounds) {
 
 // Text hit test
 bool TextObject::HitTest(POINT pt) const {
-    RECT bounds = GetBounds();
     return pt.x >= bounds.left && pt.x <= bounds.right &&
            pt.y >= bounds.top && pt.y <= bounds.bottom;
 }
 
 void TextObject::Move(int dx, int dy) {
-    position.x += dx;
-    position.y += dy;
+    bounds.left += dx;
+    bounds.right += dx;
+    bounds.top += dy;
+    bounds.bottom += dy;
 }
 
 void TextObject::SetBounds(const RECT& newBounds) {
-    // For text, we just move to top-left corner and optionally scale font
-    position.x = newBounds.left;
-    position.y = newBounds.top;
-
-    // Optionally scale font based on height change
-    RECT oldBounds = GetBounds();
-    if (oldBounds.bottom != oldBounds.top) {
-        float scale = (float)(newBounds.bottom - newBounds.top) / (float)(oldBounds.bottom - oldBounds.top);
-        fontSize = fontSize * scale;
-        if (fontSize < 8) fontSize = 8;
-        if (fontSize > 200) fontSize = 200;
-    }
+    bounds = newBounds;
 }
 
 // Blur region hit test
@@ -806,9 +849,35 @@ void DrawEditorToolbar(HDC hdc, EditorState* state) {
         DeleteObject(colorBrush);
     }
 
-    x = state->colorPickerRect.right + 12;
+    x = state->colorPickerRect.right + 4;
+
+    // Custom color button (+ symbol)
+    state->customColorRect = { x, y + 6, x + 20, y + EDITOR_TOOL_SIZE - 6 };
+    DrawRoundedRect(hdc, state->customColorRect, 4, Colors::Surface);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, Colors::TextSecondary);
+    HFONT oldFont2 = (HFONT)SelectObject(hdc, g_app.fontSmall);
+    DrawTextW(hdc, L"+", -1, &state->customColorRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont2);
+    x += 28;
+
+    // Fill toggle button (only show for shape tools)
+    EditorTool tool = state->currentTool;
+    bool isShapeTool = (tool == EditorTool::Rectangle || tool == EditorTool::Ellipse);
+    if (isShapeTool) {
+        state->fillToggleRect = { x, y, x + EDITOR_TOOL_SIZE, y + EDITOR_TOOL_SIZE };
+        DrawRoundedRect(hdc, state->fillToggleRect, 6, state->fillShapes ? Colors::AccentDark : Colors::Surface);
+        SetTextColor(hdc, state->fillShapes ? Colors::Text : Colors::TextSecondary);
+        HFONT oldFont3 = (HFONT)SelectObject(hdc, g_app.fontIcon);
+        DrawTextW(hdc, L"\u25A0", -1, &state->fillToggleRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);  // Filled square
+        SelectObject(hdc, oldFont3);
+        x += EDITOR_TOOL_SIZE + 4;
+    } else {
+        state->fillToggleRect = { 0, 0, 0, 0 };  // Hide
+    }
 
     // Draw separator
+    x += 8;
     HPEN sepPen2 = CreatePen(PS_SOLID, 1, Colors::Divider);
     SelectObject(hdc, sepPen2);
     MoveToEx(hdc, x, y + 4, nullptr);
@@ -833,7 +902,54 @@ void DrawEditorToolbar(HDC hdc, EditorState* state) {
     oldFont = (HFONT)SelectObject(hdc, g_app.fontIcon);
     DrawTextW(hdc, L"\u21B7", -1, &state->redoRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(hdc, oldFont);
-    x += EDITOR_TOOL_SIZE + 20;
+    x += EDITOR_TOOL_SIZE + 12;
+
+    // Zoom controls
+    // Zoom out
+    state->zoomOutRect = { x, y, x + 24, y + EDITOR_TOOL_SIZE };
+    DrawRoundedRect(hdc, state->zoomOutRect, 4, Colors::Surface);
+    SetTextColor(hdc, Colors::Text);
+    oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
+    DrawTextW(hdc, L"-", -1, &state->zoomOutRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    x += 26;
+
+    // Zoom percentage
+    wchar_t zoomText[32];
+    swprintf_s(zoomText, L"%d%%", (int)(state->zoom * 100));
+    RECT zoomTextRect = { x, y, x + 45, y + EDITOR_TOOL_SIZE };
+    SetTextColor(hdc, Colors::Text);
+    oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
+    DrawTextW(hdc, zoomText, -1, &zoomTextRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    x += 47;
+
+    // Zoom in
+    state->zoomInRect = { x, y, x + 24, y + EDITOR_TOOL_SIZE };
+    DrawRoundedRect(hdc, state->zoomInRect, 4, Colors::Surface);
+    SetTextColor(hdc, Colors::Text);
+    oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
+    DrawTextW(hdc, L"+", -1, &state->zoomInRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    x += 28;
+
+    // Fit button
+    state->zoomFitRect = { x, y, x + 30, y + EDITOR_TOOL_SIZE };
+    DrawRoundedRect(hdc, state->zoomFitRect, 4, Colors::Surface);
+    SetTextColor(hdc, Colors::TextSecondary);
+    oldFont = (HFONT)SelectObject(hdc, g_app.fontIcon);
+    DrawTextW(hdc, L"\u2922", -1, &state->zoomFitRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);  // Expand arrows
+    SelectObject(hdc, oldFont);
+    x += 34;
+
+    // 100% button
+    state->zoom100Rect = { x, y, x + 36, y + EDITOR_TOOL_SIZE };
+    DrawRoundedRect(hdc, state->zoom100Rect, 4, state->zoom == 1.0f ? Colors::AccentDark : Colors::Surface);
+    SetTextColor(hdc, state->zoom == 1.0f ? Colors::Text : Colors::TextSecondary);
+    oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
+    DrawTextW(hdc, L"1:1", -1, &state->zoom100Rect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+    x += 44;
 
     // Save button
     state->saveRect = { x, y, x + 60, y + EDITOR_TOOL_SIZE };
@@ -841,6 +957,86 @@ void DrawEditorToolbar(HDC hdc, EditorState* state) {
     SetTextColor(hdc, Colors::Text);
     oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
     DrawTextW(hdc, L"Save", -1, &state->saveRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+}
+
+void DrawEditorStatusBar(HDC hdc, EditorState* state) {
+    RECT& statusBar = state->statusBarRect;
+
+    // Background
+    HBRUSH bgBrush = CreateSolidBrush(Colors::Background);
+    FillRect(hdc, &statusBar, bgBrush);
+    DeleteObject(bgBrush);
+
+    // Top divider line
+    HPEN divPen = CreatePen(PS_SOLID, 1, Colors::Divider);
+    SelectObject(hdc, divPen);
+    MoveToEx(hdc, statusBar.left, statusBar.top, nullptr);
+    LineTo(hdc, statusBar.right, statusBar.top);
+    DeleteObject(divPen);
+
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, Colors::TextSecondary);
+    HFONT oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
+
+    int x = statusBar.left + 12;
+
+    // Current tool name
+    int toolIdx = (int)state->currentTool;
+    if (toolIdx >= 0 && toolIdx < (int)EditorTool::COUNT) {
+        RECT toolRect = { x, statusBar.top, x + 120, statusBar.bottom };
+        DrawTextW(hdc, TOOL_NAMES[toolIdx], -1, &toolRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        x += 130;
+    }
+
+    // Separator
+    HPEN sepPen = CreatePen(PS_SOLID, 1, Colors::Divider);
+    SelectObject(hdc, sepPen);
+    MoveToEx(hdc, x, statusBar.top + 4, nullptr);
+    LineTo(hdc, x, statusBar.bottom - 4);
+    DeleteObject(sepPen);
+    x += 12;
+
+    // Image dimensions
+    if (state->displayImage) {
+        wchar_t dimText[64];
+        swprintf_s(dimText, L"%d \u00D7 %d px",
+            state->displayImage->GetWidth(), state->displayImage->GetHeight());
+        RECT dimRect = { x, statusBar.top, x + 120, statusBar.bottom };
+        DrawTextW(hdc, dimText, -1, &dimRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        x += 130;
+    }
+
+    // Object count
+    if (!state->objects.empty()) {
+        HPEN sepPen2 = CreatePen(PS_SOLID, 1, Colors::Divider);
+        SelectObject(hdc, sepPen2);
+        MoveToEx(hdc, x, statusBar.top + 4, nullptr);
+        LineTo(hdc, x, statusBar.bottom - 4);
+        DeleteObject(sepPen2);
+        x += 12;
+
+        wchar_t objText[32];
+        swprintf_s(objText, L"%d annotations", (int)state->objects.size());
+        RECT objRect = { x, statusBar.top, x + 100, statusBar.bottom };
+        DrawTextW(hdc, objText, -1, &objRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+
+    // Right side: hints
+    const wchar_t* hint = L"";
+    if (state->currentTool == EditorTool::Select && state->selectedObject >= 0) {
+        hint = L"Del: Delete  |  Ctrl+C: Copy  |  Ctrl+V: Paste";
+    } else if (state->currentTool == EditorTool::Crop) {
+        hint = L"Enter: Apply crop  |  Esc: Cancel";
+    } else if (state->textInputActive) {
+        hint = L"Enter: Confirm  |  Esc: Cancel";
+    } else {
+        hint = L"Right-click tool for settings  |  Scroll to zoom";
+    }
+
+    RECT hintRect = { statusBar.right - 350, statusBar.top, statusBar.right - 12, statusBar.bottom };
+    DrawTextW(hdc, hint, -1, &hintRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
     SelectObject(hdc, oldFont);
 }
 
@@ -878,8 +1074,10 @@ void DrawEditorCanvas(HDC hdc, EditorState* state) {
 
     // Draw objects
     POINT drawOffset = { canvas.left + centerX, canvas.top + centerY };
-    for (const auto& obj : state->objects) {
-        obj->Draw(g, state->zoom, drawOffset);
+    for (size_t i = 0; i < state->objects.size(); i++) {
+        // Skip text object being edited (it's drawn separately in the text input box)
+        if (state->textInputActive && state->editingTextIndex == (int)i) continue;
+        state->objects[i]->Draw(g, state->zoom, drawOffset);
     }
 
     // Draw active object being created
@@ -951,25 +1149,56 @@ void DrawEditorCanvas(HDC hdc, EditorState* state) {
         DrawSelectionHandles(g, bounds, state->zoom, drawOffset);
     }
 
-    // Draw text input cursor
-    if (state->textInputActive) {
-        int tx = (int)(state->textPosition.x * state->zoom) + canvas.left + centerX;
-        int ty = (int)(state->textPosition.y * state->zoom) + canvas.top + centerY;
+    // Draw text box while drawing
+    if (state->isDrawing && state->currentTool == EditorTool::Text) {
+        RECT tb = state->textBounds;
+        // Normalize for display
+        if (tb.left > tb.right) std::swap(tb.left, tb.right);
+        if (tb.top > tb.bottom) std::swap(tb.top, tb.bottom);
 
+        float x = tb.left * state->zoom + drawOffset.x;
+        float y = tb.top * state->zoom + drawOffset.y;
+        float w = (tb.right - tb.left) * state->zoom;
+        float h = (tb.bottom - tb.top) * state->zoom;
+
+        // Draw dashed box outline
+        Gdiplus::Pen boxPen(state->currentColor, 1);
+        boxPen.SetDashStyle(Gdiplus::DashStyleDash);
+        g.DrawRectangle(&boxPen, x, y, w, h);
+    }
+
+    // Draw text input box and cursor
+    if (state->textInputActive) {
+        float x = state->textBounds.left * state->zoom + drawOffset.x;
+        float y = state->textBounds.top * state->zoom + drawOffset.y;
+        float w = (state->textBounds.right - state->textBounds.left) * state->zoom;
+        float h = (state->textBounds.bottom - state->textBounds.top) * state->zoom;
+
+        // Draw box outline
+        Gdiplus::Pen boxPen(state->currentColor, 2);
+        g.DrawRectangle(&boxPen, x, y, w, h);
+
+        // Draw text within bounds
         Gdiplus::FontFamily family(L"Segoe UI");
         Gdiplus::Font font(&family, state->currentTextSize * state->zoom);
         Gdiplus::SolidBrush brush(state->currentColor);
+        Gdiplus::RectF layoutRect(x + 4, y + 2, w - 8, h - 4);
+        Gdiplus::StringFormat format;
+        format.SetAlignment(Gdiplus::StringAlignmentNear);
+        format.SetLineAlignment(Gdiplus::StringAlignmentNear);
 
         if (!state->textBuffer.empty()) {
-            g.DrawString(state->textBuffer.c_str(), -1, &font, Gdiplus::PointF((float)tx, (float)ty), &brush);
+            g.DrawString(state->textBuffer.c_str(), -1, &font, layoutRect, &format, &brush);
         }
 
-        // Cursor
+        // Draw cursor
+        Gdiplus::RectF textBounds;
+        g.MeasureString(state->textBuffer.c_str(), -1, &font, layoutRect, &format, &textBounds);
         Gdiplus::Pen cursorPen(state->currentColor, 2);
-        Gdiplus::RectF bounds;
-        g.MeasureString(state->textBuffer.c_str(), -1, &font, Gdiplus::PointF((float)tx, (float)ty), &bounds);
-        float cursorX = tx + bounds.Width;
-        g.DrawLine(&cursorPen, cursorX, (float)ty, cursorX, (float)ty + 20 * state->zoom);
+        float cursorX = x + 4 + textBounds.Width;
+        float cursorY = y + 2;
+        float cursorHeight = state->currentTextSize * state->zoom;
+        g.DrawLine(&cursorPen, cursorX, cursorY, cursorX, cursorY + cursorHeight);
     }
 }
 
@@ -1058,7 +1287,8 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         GetClientRect(hwnd, &clientRect);
 
         state->toolbarRect = { 0, 0, clientRect.right, EDITOR_TOOLBAR_HEIGHT };
-        state->canvasRect = { 0, EDITOR_TOOLBAR_HEIGHT, clientRect.right, clientRect.bottom };
+        state->statusBarRect = { 0, clientRect.bottom - EDITOR_STATUS_HEIGHT, clientRect.right, clientRect.bottom };
+        state->canvasRect = { 0, EDITOR_TOOLBAR_HEIGHT, clientRect.right, clientRect.bottom - EDITOR_STATUS_HEIGHT };
 
         InvalidateRect(hwnd, nullptr, TRUE);
         return 0;
@@ -1222,6 +1452,9 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             gSlider.DrawEllipse(&thumbPen, thumbX - thumbRadius, trackY + trackHeight/2 - thumbRadius, thumbRadius * 2, thumbRadius * 2);
         }
 
+        // Draw status bar
+        DrawEditorStatusBar(memDC, state);
+
         BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
 
         SelectObject(memDC, oldBitmap);
@@ -1292,6 +1525,7 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             // Apply value to appropriate setting
             switch (state->sliderToolIndex) {
                 case (int)EditorTool::Arrow:
+                case (int)EditorTool::Line:
                 case (int)EditorTool::Rectangle:
                 case (int)EditorTool::Ellipse:
                 case (int)EditorTool::Pen:
@@ -1402,10 +1636,16 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                         path->points.push_back(canvasPt);
                     }
                 }
+            } else if (state->currentTool == EditorTool::Text) {
+                // Update text box while drawing
+                state->textBounds.right = canvasPt.x;
+                state->textBounds.bottom = canvasPt.y;
             } else if (state->activeObject) {
                 // Update shape bounds
                 if (auto* arrow = dynamic_cast<ArrowObject*>(state->activeObject.get())) {
                     arrow->end = canvasPt;
+                } else if (auto* line = dynamic_cast<LineObject*>(state->activeObject.get())) {
+                    line->end = canvasPt;
                 } else if (auto* shape = dynamic_cast<ShapeObject*>(state->activeObject.get())) {
                     shape->bounds.right = canvasPt.x;
                     shape->bounds.bottom = canvasPt.y;
@@ -1528,6 +1768,7 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                     // Apply value
                     switch (state->sliderToolIndex) {
                         case (int)EditorTool::Arrow:
+                        case (int)EditorTool::Line:
                         case (int)EditorTool::Rectangle:
                         case (int)EditorTool::Ellipse:
                         case (int)EditorTool::Pen:
@@ -1560,17 +1801,35 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                 RECT btnRect = { toolX, toolY, toolX + EDITOR_TOOL_SIZE, toolY + EDITOR_TOOL_SIZE };
                 if (PtInRect(&btnRect, pt)) {
                     // Finalize any active text input before switching tools
-                    if (state->textInputActive && !state->textBuffer.empty()) {
-                        auto textObj = std::make_unique<TextObject>();
-                        textObj->position = state->textPosition;
-                        textObj->text = state->textBuffer;
-                        textObj->color = state->currentColor;
-                        textObj->fontSize = state->currentTextSize;
-                        state->undoManager->Execute(std::make_unique<AddObjectCommand>(state, std::move(textObj)));
-                        state->unsavedChanges = true;
+                    if (state->textInputActive) {
+                        if (state->editingTextIndex >= 0) {
+                            // Update existing text object
+                            if (!state->textBuffer.empty()) {
+                                TextObject* existingObj = dynamic_cast<TextObject*>(
+                                    state->objects[state->editingTextIndex].get());
+                                if (existingObj) {
+                                    existingObj->text = state->textBuffer;
+                                    existingObj->bounds = state->textBounds;
+                                    existingObj->color = state->currentColor;
+                                    existingObj->fontSize = state->currentTextSize;
+                                }
+                            } else {
+                                state->objects.erase(state->objects.begin() + state->editingTextIndex);
+                            }
+                            state->unsavedChanges = true;
+                        } else if (!state->textBuffer.empty()) {
+                            auto textObj = std::make_unique<TextObject>();
+                            textObj->bounds = state->textBounds;
+                            textObj->text = state->textBuffer;
+                            textObj->color = state->currentColor;
+                            textObj->fontSize = state->currentTextSize;
+                            state->undoManager->Execute(std::make_unique<AddObjectCommand>(state, std::move(textObj)));
+                            state->unsavedChanges = true;
+                        }
                     }
                     state->textInputActive = false;
                     state->textBuffer.clear();
+                    state->editingTextIndex = -1;
 
                     state->currentTool = (EditorTool)i;
 
@@ -1596,13 +1855,70 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                 for (int i = 0; i < NUM_EDITOR_COLORS; i++) {
                     RECT colorRect = { colorX + i * 24 + 4, state->colorPickerRect.top,
                                        colorX + i * 24 + 24, state->colorPickerRect.bottom };
-                    POINT pt = { x, y };
                     if (PtInRect(&colorRect, pt)) {
                         state->currentColor = EDITOR_COLORS[i];
                         InvalidateRect(hwnd, &state->toolbarRect, FALSE);
                         return 0;
                     }
                 }
+            }
+
+            // Custom color button
+            if (PtInRect(&state->customColorRect, pt)) {
+                CHOOSECOLORW cc = {};
+                static COLORREF customColors[16] = { 0 };
+                cc.lStructSize = sizeof(cc);
+                cc.hwndOwner = hwnd;
+                cc.lpCustColors = customColors;
+                cc.rgbResult = RGB(state->currentColor.GetR(), state->currentColor.GetG(), state->currentColor.GetB());
+                cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+                if (ChooseColorW(&cc)) {
+                    state->currentColor = Gdiplus::Color(255, GetRValue(cc.rgbResult), GetGValue(cc.rgbResult), GetBValue(cc.rgbResult));
+                    InvalidateRect(hwnd, &state->toolbarRect, FALSE);
+                }
+                return 0;
+            }
+
+            // Fill toggle button
+            if (PtInRect(&state->fillToggleRect, pt)) {
+                state->fillShapes = !state->fillShapes;
+                InvalidateRect(hwnd, &state->toolbarRect, FALSE);
+                return 0;
+            }
+
+            // Zoom controls
+            if (PtInRect(&state->zoomOutRect, pt)) {
+                state->zoom = (std::max)(0.1f, state->zoom * 0.9f);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (PtInRect(&state->zoomInRect, pt)) {
+                state->zoom = (std::min)(5.0f, state->zoom * 1.1f);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (PtInRect(&state->zoom100Rect, pt)) {
+                state->zoom = 1.0f;
+                state->panOffset = { 0, 0 };
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+            if (PtInRect(&state->zoomFitRect, pt) && state->displayImage) {
+                // Fit image to canvas
+                RECT& canvas = state->canvasRect;
+                int canvasW = canvas.right - canvas.left - 40;
+                int canvasH = canvas.bottom - canvas.top - 40;
+                int imgW = state->displayImage->GetWidth();
+                int imgH = state->displayImage->GetHeight();
+
+                float scaleX = (float)canvasW / imgW;
+                float scaleY = (float)canvasH / imgH;
+                state->zoom = (std::min)(scaleX, scaleY);
+                state->zoom = (std::max)(0.1f, (std::min)(5.0f, state->zoom));
+                state->panOffset = { 0, 0 };
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
             }
 
             // Check undo/redo/save buttons using stored positions
@@ -1704,23 +2020,44 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         state->drawEnd = canvasPt;
         state->isDrawing = true;
 
-        // Handle text tool
+        // Handle text tool - draw a box first
         if (state->currentTool == EditorTool::Text) {
-            if (state->textInputActive && !state->textBuffer.empty()) {
+            if (state->textInputActive) {
                 // Commit current text
-                auto textObj = std::make_unique<TextObject>();
-                textObj->position = state->textPosition;
-                textObj->text = state->textBuffer;
-                textObj->color = state->currentColor;
-                textObj->fontSize = state->currentTextSize;
+                if (state->editingTextIndex >= 0) {
+                    // Update existing text object
+                    if (!state->textBuffer.empty()) {
+                        TextObject* existingObj = dynamic_cast<TextObject*>(
+                            state->objects[state->editingTextIndex].get());
+                        if (existingObj) {
+                            existingObj->text = state->textBuffer;
+                            existingObj->bounds = state->textBounds;
+                            existingObj->color = state->currentColor;
+                            existingObj->fontSize = state->currentTextSize;
+                        }
+                    } else {
+                        // Empty text - delete the object
+                        state->objects.erase(state->objects.begin() + state->editingTextIndex);
+                    }
+                    state->unsavedChanges = true;
+                } else if (!state->textBuffer.empty()) {
+                    // Create new text object
+                    auto textObj = std::make_unique<TextObject>();
+                    textObj->bounds = state->textBounds;
+                    textObj->text = state->textBuffer;
+                    textObj->color = state->currentColor;
+                    textObj->fontSize = state->currentTextSize;
 
-                state->undoManager->Execute(std::make_unique<AddObjectCommand>(state, std::move(textObj)));
-                state->unsavedChanges = true;
-                state->textBuffer.clear();
+                    state->undoManager->Execute(std::make_unique<AddObjectCommand>(state, std::move(textObj)));
+                    state->unsavedChanges = true;
+                }
             }
-            state->textInputActive = true;
-            state->textPosition = canvasPt;
-            state->isDrawing = false;
+            // Start drawing a new text box
+            state->textInputActive = false;
+            state->textBuffer.clear();
+            state->editingTextIndex = -1;
+            state->textBounds = { canvasPt.x, canvasPt.y, canvasPt.x, canvasPt.y };
+            // isDrawing is already true, continue to draw the text box
             InvalidateRect(hwnd, &state->canvasRect, FALSE);
             return 0;
         }
@@ -1736,11 +2073,22 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             state->activeObject = std::move(arrow);
             break;
         }
+        case EditorTool::Line: {
+            auto line = std::make_unique<LineObject>();
+            line->start = canvasPt;
+            line->end = canvasPt;
+            line->color = state->currentColor;
+            line->thickness = state->currentThickness;
+            state->activeObject = std::move(line);
+            break;
+        }
         case EditorTool::Rectangle: {
             auto shape = std::make_unique<ShapeObject>();
             shape->bounds = { canvasPt.x, canvasPt.y, canvasPt.x, canvasPt.y };
             shape->strokeColor = state->currentColor;
+            shape->fillColor = state->currentColor;
             shape->thickness = state->currentThickness;
+            shape->filled = state->fillShapes;
             shape->isEllipse = false;
             state->activeObject = std::move(shape);
             break;
@@ -1749,7 +2097,9 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             auto shape = std::make_unique<ShapeObject>();
             shape->bounds = { canvasPt.x, canvasPt.y, canvasPt.x, canvasPt.y };
             shape->strokeColor = state->currentColor;
+            shape->fillColor = state->currentColor;
             shape->thickness = state->currentThickness;
+            shape->filled = state->fillShapes;
             shape->isEllipse = true;
             state->activeObject = std::move(shape);
             break;
@@ -1798,6 +2148,26 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             return 0;
         }
 
+        // Finish text box drawing and activate text input
+        if (state->isDrawing && state->currentTool == EditorTool::Text) {
+            // Normalize text box bounds
+            if (state->textBounds.left > state->textBounds.right)
+                std::swap(state->textBounds.left, state->textBounds.right);
+            if (state->textBounds.top > state->textBounds.bottom)
+                std::swap(state->textBounds.top, state->textBounds.bottom);
+
+            // Only activate text input if box is large enough (at least 20x20 pixels)
+            int boxWidth = state->textBounds.right - state->textBounds.left;
+            int boxHeight = state->textBounds.bottom - state->textBounds.top;
+            if (boxWidth >= 20 && boxHeight >= 20) {
+                state->textInputActive = true;
+                state->textBuffer.clear();
+            }
+            state->isDrawing = false;
+            InvalidateRect(hwnd, &state->canvasRect, FALSE);
+            return 0;
+        }
+
         if (state->isDrawing && state->activeObject) {
             // Normalize shape bounds
             if (auto* shape = dynamic_cast<ShapeObject*>(state->activeObject.get())) {
@@ -1830,6 +2200,36 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         return 0;
     }
 
+    case WM_LBUTTONDBLCLK: {
+        if (!state) return 0;
+
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+
+        // Only handle double-click on canvas
+        if (y <= EDITOR_TOOLBAR_HEIGHT) return 0;
+
+        POINT canvasPt = ScreenToCanvas(state, { x, y });
+
+        // Check if double-clicking on a text object
+        for (int i = (int)state->objects.size() - 1; i >= 0; i--) {
+            TextObject* textObj = dynamic_cast<TextObject*>(state->objects[i].get());
+            if (textObj && textObj->HitTest(canvasPt)) {
+                // Load text object for editing
+                state->textInputActive = true;
+                state->textBuffer = textObj->text;
+                state->textBounds = textObj->bounds;
+                state->editingTextIndex = i;
+                state->currentColor = textObj->color;
+                state->currentTextSize = textObj->fontSize;
+                state->currentTool = EditorTool::Text;
+                InvalidateRect(hwnd, &state->canvasRect, FALSE);
+                return 0;
+            }
+        }
+        return 0;
+    }
+
     case WM_RBUTTONDOWN: {
         if (!state) return 0;
 
@@ -1851,6 +2251,7 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
                     switch ((EditorTool)i) {
                         case EditorTool::Arrow:
+                        case EditorTool::Line:
                         case EditorTool::Rectangle:
                         case EditorTool::Ellipse:
                         case EditorTool::Pen:
@@ -1948,9 +2349,26 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             }
         } else if (ch == VK_RETURN) {
             // Commit text
-            if (!state->textBuffer.empty()) {
+            if (state->editingTextIndex >= 0) {
+                // Editing existing text object
+                if (!state->textBuffer.empty()) {
+                    TextObject* existingObj = dynamic_cast<TextObject*>(
+                        state->objects[state->editingTextIndex].get());
+                    if (existingObj) {
+                        existingObj->text = state->textBuffer;
+                        existingObj->bounds = state->textBounds;
+                        existingObj->color = state->currentColor;
+                        existingObj->fontSize = state->currentTextSize;
+                    }
+                } else {
+                    // Empty text - delete the object
+                    state->objects.erase(state->objects.begin() + state->editingTextIndex);
+                }
+                state->unsavedChanges = true;
+            } else if (!state->textBuffer.empty()) {
+                // Creating new text object
                 auto textObj = std::make_unique<TextObject>();
-                textObj->position = state->textPosition;
+                textObj->bounds = state->textBounds;
                 textObj->text = state->textBuffer;
                 textObj->color = state->currentColor;
                 textObj->fontSize = state->currentTextSize;
@@ -1960,9 +2378,11 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             }
             state->textInputActive = false;
             state->textBuffer.clear();
+            state->editingTextIndex = -1;
         } else if (ch == VK_ESCAPE) {
             state->textInputActive = false;
             state->textBuffer.clear();
+            state->editingTextIndex = -1;
         } else if (ch >= 32) {
             state->textBuffer += ch;
         }
@@ -1978,6 +2398,7 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             if (state->textInputActive) {
                 state->textInputActive = false;
                 state->textBuffer.clear();
+                state->editingTextIndex = -1;
                 InvalidateRect(hwnd, &state->canvasRect, FALSE);
             } else if (state->cropActive) {
                 state->cropActive = false;
@@ -2013,6 +2434,41 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             return 0;
         }
 
+        // Ctrl+C - Copy selected object
+        if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'C') {
+            if (state->selectedObject >= 0 && state->selectedObject < (int)state->objects.size()) {
+                state->clipboardObject.reset(state->objects[state->selectedObject]->Clone());
+            }
+            return 0;
+        }
+
+        // Ctrl+V - Paste
+        if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'V') {
+            if (state->clipboardObject) {
+                auto newObj = std::unique_ptr<EditorObject>(state->clipboardObject->Clone());
+                // Offset pasted object slightly
+                newObj->Move(20, 20);
+                state->undoManager->Execute(std::make_unique<AddObjectCommand>(state, std::move(newObj)));
+                state->selectedObject = (int)state->objects.size() - 1;
+                state->unsavedChanges = true;
+                InvalidateRect(hwnd, &state->canvasRect, FALSE);
+            }
+            return 0;
+        }
+
+        // Ctrl+D - Duplicate selected object
+        if ((GetKeyState(VK_CONTROL) & 0x8000) && wParam == 'D') {
+            if (state->selectedObject >= 0 && state->selectedObject < (int)state->objects.size()) {
+                auto newObj = std::unique_ptr<EditorObject>(state->objects[state->selectedObject]->Clone());
+                newObj->Move(20, 20);
+                state->undoManager->Execute(std::make_unique<AddObjectCommand>(state, std::move(newObj)));
+                state->selectedObject = (int)state->objects.size() - 1;
+                state->unsavedChanges = true;
+                InvalidateRect(hwnd, &state->canvasRect, FALSE);
+            }
+            return 0;
+        }
+
         // Enter - Apply crop
         if (wParam == VK_RETURN && state->cropActive) {
             state->undoManager->Execute(std::make_unique<CropCommand>(state, state->cropRect));
@@ -2040,14 +2496,22 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         }
 
         // Number keys for tools (only when not typing text)
-        if (!state->textInputActive && wParam >= '1' && wParam <= '9') {
-            int toolIndex = wParam - '1';
-            if (toolIndex <= (int)EditorTool::Crop) {
+        // 1-9 for tools, 0 for Crop
+        if (!state->textInputActive) {
+            int toolIndex = -1;
+            if (wParam >= '1' && wParam <= '9') {
+                toolIndex = wParam - '1';
+            } else if (wParam == '0') {
+                toolIndex = (int)EditorTool::Crop;
+            }
+
+            if (toolIndex >= 0 && toolIndex < (int)EditorTool::COUNT) {
                 state->currentTool = (EditorTool)toolIndex;
                 state->cropActive = (state->currentTool == EditorTool::Crop);
+                state->selectedObject = -1;  // Clear selection when switching tools
                 InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
             }
-            return 0;
         }
 
         return 0;

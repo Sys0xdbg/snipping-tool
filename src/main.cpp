@@ -106,6 +106,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     // Register editor window class
     WNDCLASSEXW wcEditor = {};
     wcEditor.cbSize = sizeof(wcEditor);
+    wcEditor.style = CS_DBLCLKS;  // Enable double-click messages
     wcEditor.lpfnWndProc = EditorWndProc;
     wcEditor.hInstance = hInstance;
     wcEditor.hCursor = LoadCursor(nullptr, IDC_ARROW);

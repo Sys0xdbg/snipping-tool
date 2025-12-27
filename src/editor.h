@@ -9,13 +9,15 @@
 enum class EditorTool {
     Select = 0,
     Arrow,
+    Line,
     Rectangle,
     Ellipse,
     Pen,
     Highlighter,
     Text,
     Blur,
-    Crop
+    Crop,
+    COUNT  // Number of tools
 };
 
 // Base class for drawable objects
@@ -40,6 +42,21 @@ struct ArrowObject : EditorObject {
     void Draw(Gdiplus::Graphics& g, float zoom, POINT offset) override;
     RECT GetBounds() const override;
     EditorObject* Clone() const override { return new ArrowObject(*this); }
+    bool HitTest(POINT pt) const override;
+    void Move(int dx, int dy) override;
+    void SetBounds(const RECT& newBounds) override;
+};
+
+// Line annotation (no arrowhead)
+struct LineObject : EditorObject {
+    POINT start = {};
+    POINT end = {};
+    Gdiplus::Color color;
+    float thickness = 3.0f;
+
+    void Draw(Gdiplus::Graphics& g, float zoom, POINT offset) override;
+    RECT GetBounds() const override;
+    EditorObject* Clone() const override { return new LineObject(*this); }
     bool HitTest(POINT pt) const override;
     void Move(int dx, int dy) override;
     void SetBounds(const RECT& newBounds) override;
@@ -79,7 +96,7 @@ struct PathObject : EditorObject {
 
 // Text annotation
 struct TextObject : EditorObject {
-    POINT position = {};
+    RECT bounds = {};  // Text box bounds
     std::wstring text;
     Gdiplus::Color color;
     std::wstring fontName = L"Segoe UI";
@@ -87,7 +104,7 @@ struct TextObject : EditorObject {
     bool bold = false;
 
     void Draw(Gdiplus::Graphics& g, float zoom, POINT offset) override;
-    RECT GetBounds() const override;
+    RECT GetBounds() const override { return bounds; }
     EditorObject* Clone() const override { return new TextObject(*this); }
     bool HitTest(POINT pt) const override;
     void Move(int dx, int dy) override;
@@ -126,6 +143,11 @@ struct EditorState {
     float currentThickness = 3.0f;
     int currentBlurSize = 12;
     float currentTextSize = 24.0f;
+    bool fillShapes = false;  // Fill rectangles/ellipses
+    BYTE currentOpacity = 255;  // 0-255 opacity
+
+    // Clipboard for copy/paste
+    std::unique_ptr<EditorObject> clipboardObject;
 
     // Drawing state
     bool isDrawing = false;
@@ -136,7 +158,8 @@ struct EditorState {
     // Text input state
     bool textInputActive = false;
     std::wstring textBuffer;
-    POINT textPosition = {};
+    RECT textBounds = {};  // Text box being edited
+    int editingTextIndex = -1;  // Index of text object being edited (-1 = new)
 
     // Crop state
     bool cropActive = false;
@@ -175,10 +198,17 @@ struct EditorState {
     // Layout rectangles
     RECT toolbarRect = {};
     RECT canvasRect = {};
+    RECT statusBarRect = {};
     RECT colorPickerRect = {};
+    RECT fillToggleRect = {};
+    RECT customColorRect = {};
     RECT undoRect = {};
     RECT redoRect = {};
     RECT saveRect = {};
+    RECT zoomFitRect = {};
+    RECT zoom100Rect = {};
+    RECT zoomInRect = {};
+    RECT zoomOutRect = {};
 };
 
 // Predefined colors for picker
@@ -199,14 +229,32 @@ const int NUM_EDITOR_COLORS = 9;
 const wchar_t* const TOOL_ICONS[] = {
     L"\u2316",  // Select (crosshair)
     L"\u2794",  // Arrow
+    L"\u2571",  // Line (diagonal)
     L"\u25AD",  // Rectangle
     L"\u25CB",  // Ellipse
     L"\u270F",  // Pen
     L"\u2591",  // Highlighter
     L"T",       // Text
     L"\u2592",  // Blur
-    L"\u2702", // Crop (scissors)
+    L"\u2702",  // Crop (scissors)
 };
+
+// Tool names for tooltips
+const wchar_t* const TOOL_NAMES[] = {
+    L"Select (1)",
+    L"Arrow (2)",
+    L"Line (3)",
+    L"Rectangle (4)",
+    L"Ellipse (5)",
+    L"Pen (6)",
+    L"Highlighter (7)",
+    L"Text (8)",
+    L"Blur (9)",
+    L"Crop (0)",
+};
+
+// Status bar height
+const int EDITOR_STATUS_HEIGHT = 24;
 
 // Editor functions
 HWND OpenEditor(const std::wstring& filepath);
