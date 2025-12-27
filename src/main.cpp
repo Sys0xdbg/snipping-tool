@@ -10,6 +10,7 @@
 #include <dwmapi.h>
 #include <uxtheme.h>
 #include <shlobj.h>
+#include <shellapi.h>
 #include <objidl.h>
 #include <gdiplus.h>
 #include <string>
@@ -112,7 +113,13 @@ struct AppState {
     HWND overlayWnd = nullptr;
     HWND modePickerWnd = nullptr;
     HWND tooltipWnd = nullptr;
+    HWND notificationWnd = nullptr;
     HINSTANCE hInstance = nullptr;
+
+    // Notification state
+    std::wstring lastScreenshotPath;
+    HBITMAP notificationPreview = nullptr;
+    int notificationHovered = -1;  // 0=copy, 1=folder, 2=close
 
     // Low-level keyboard hook for intercepting Win+Shift+S
     HHOOK keyboardHook = nullptr;
@@ -176,8 +183,7 @@ struct ToolbarButton {
 };
 
 enum ButtonID {
-    BTN_NEW = 1,
-    BTN_MODE_RECT,
+    BTN_MODE_RECT = 1,
     BTN_MODE_WINDOW,
     BTN_MODE_FULLSCREEN,
     BTN_DELAY,
@@ -185,10 +191,9 @@ enum ButtonID {
 };
 
 ToolbarButton g_buttons[] = {
-    { BTN_NEW, L"New", L"Start a new screenshot capture", {}, false, false },
-    { BTN_MODE_RECT, L"Rectangle", L"Draw a rectangle to capture a region", {}, true, true },
-    { BTN_MODE_WINDOW, L"Window", L"Click a window to capture it", {}, true, false },
-    { BTN_MODE_FULLSCREEN, L"Fullscreen", L"Capture the entire screen", {}, true, false },
+    { BTN_MODE_RECT, L"Rectangle", L"Capture a rectangular region", {}, true, true },
+    { BTN_MODE_WINDOW, L"Window", L"Capture a window", {}, true, false },
+    { BTN_MODE_FULLSCREEN, L"Fullscreen", L"Capture entire screen", {}, true, false },
     { BTN_DELAY, L"Delay", L"Set a timer before capture starts", {}, false, false },
     { BTN_SETTINGS, L"Settings", L"Configure hotkeys and preferences", {}, false, false },
 };
@@ -197,7 +202,7 @@ const int NUM_BUTTONS = sizeof(g_buttons) / sizeof(g_buttons[0]);
 const int TOOLBAR_HEIGHT = 48;
 const int BUTTON_SIZE = 36;
 const int BUTTON_MARGIN = 6;
-const int WINDOW_WIDTH = 420;
+const int WINDOW_WIDTH = 340;
 const int WINDOW_HEIGHT = 56;
 
 //------------------------------------------------------------------------------
@@ -594,6 +599,341 @@ bool SaveScreenshot(const RECT& region, const wchar_t* filename) {
 }
 
 //------------------------------------------------------------------------------
+// Screenshot Notification
+//------------------------------------------------------------------------------
+#define NOTIF_WIDTH 320
+#define NOTIF_HEIGHT 100
+#define NOTIF_PREVIEW_SIZE 70
+#define NOTIF_BTN_SIZE 32
+#define NOTIF_TIMER_ID 1
+#define NOTIF_DURATION 5000
+
+struct NotifButton {
+    RECT rect;
+    const wchar_t* icon;
+    const wchar_t* tooltip;
+};
+
+NotifButton g_notifButtons[3];  // Copy, Open Folder, Close
+
+HBITMAP CreatePreviewBitmap(const wchar_t* filepath, int size) {
+    Gdiplus::Bitmap* original = Gdiplus::Bitmap::FromFile(filepath);
+    if (!original || original->GetLastStatus() != Gdiplus::Ok) {
+        delete original;
+        return nullptr;
+    }
+
+    // Create scaled preview
+    Gdiplus::Bitmap preview(size, size, PixelFormat32bppARGB);
+    Gdiplus::Graphics graphics(&preview);
+    graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+    graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+
+    // Calculate scaling to fit while maintaining aspect ratio
+    float scaleX = (float)size / original->GetWidth();
+    float scaleY = (float)size / original->GetHeight();
+    float scale = (std::min)(scaleX, scaleY);
+    int scaledW = (int)(original->GetWidth() * scale);
+    int scaledH = (int)(original->GetHeight() * scale);
+    int offsetX = (size - scaledW) / 2;
+    int offsetY = (size - scaledH) / 2;
+
+    // Draw dark background
+    Gdiplus::SolidBrush bgBrush(Gdiplus::Color(255, 30, 30, 30));
+    graphics.FillRectangle(&bgBrush, 0, 0, size, size);
+
+    graphics.DrawImage(original, offsetX, offsetY, scaledW, scaledH);
+    delete original;
+
+    HBITMAP hBitmap = nullptr;
+    preview.GetHBITMAP(Gdiplus::Color(0, 0, 0, 0), &hBitmap);
+    return hBitmap;
+}
+
+void HideNotification();
+
+LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdcScreen = BeginPaint(hwnd, &ps);
+
+        RECT clientRect;
+        GetClientRect(hwnd, &clientRect);
+
+        // Double buffering
+        HDC hdc = CreateCompatibleDC(hdcScreen);
+        HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, clientRect.right, clientRect.bottom);
+        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdc, hBitmap);
+
+        // Draw with GDI+
+        Gdiplus::Graphics graphics(hdc);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
+
+        // Background
+        Gdiplus::GraphicsPath bgPath;
+        int radius = 12;
+        bgPath.AddArc(0, 0, radius * 2, radius * 2, 180, 90);
+        bgPath.AddArc(clientRect.right - radius * 2, 0, radius * 2, radius * 2, 270, 90);
+        bgPath.AddArc(clientRect.right - radius * 2, clientRect.bottom - radius * 2, radius * 2, radius * 2, 0, 90);
+        bgPath.AddArc(0, clientRect.bottom - radius * 2, radius * 2, radius * 2, 90, 90);
+        bgPath.CloseFigure();
+
+        Gdiplus::SolidBrush bgBrush(Gdiplus::Color(245, 40, 40, 40));
+        graphics.FillPath(&bgBrush, &bgPath);
+        Gdiplus::Pen borderPen(Gdiplus::Color(255, 60, 60, 60), 1.0f);
+        graphics.DrawPath(&borderPen, &bgPath);
+
+        // Preview image
+        if (g_app.notificationPreview) {
+            HDC memDC = CreateCompatibleDC(hdc);
+            HBITMAP oldBmp = (HBITMAP)SelectObject(memDC, g_app.notificationPreview);
+
+            // Draw with rounded corners
+            int previewX = 12;
+            int previewY = (NOTIF_HEIGHT - NOTIF_PREVIEW_SIZE) / 2;
+
+            Gdiplus::GraphicsPath clipPath;
+            clipPath.AddArc(previewX, previewY, 8, 8, 180, 90);
+            clipPath.AddArc(previewX + NOTIF_PREVIEW_SIZE - 8, previewY, 8, 8, 270, 90);
+            clipPath.AddArc(previewX + NOTIF_PREVIEW_SIZE - 8, previewY + NOTIF_PREVIEW_SIZE - 8, 8, 8, 0, 90);
+            clipPath.AddArc(previewX, previewY + NOTIF_PREVIEW_SIZE - 8, 8, 8, 90, 90);
+            clipPath.CloseFigure();
+
+            Gdiplus::Region clipRegion(&clipPath);
+            graphics.SetClip(&clipRegion);
+            graphics.DrawImage(Gdiplus::Bitmap::FromHBITMAP(g_app.notificationPreview, nullptr),
+                previewX, previewY, NOTIF_PREVIEW_SIZE, NOTIF_PREVIEW_SIZE);
+            graphics.ResetClip();
+
+            SelectObject(memDC, oldBmp);
+            DeleteDC(memDC);
+
+            // Border around preview
+            Gdiplus::Pen previewBorder(Gdiplus::Color(100, 255, 255, 255), 1.0f);
+            graphics.DrawPath(&previewBorder, &clipPath);
+        }
+
+        // Text
+        Gdiplus::FontFamily fontFamily(L"Segoe UI");
+        Gdiplus::Font titleFont(&fontFamily, 12, Gdiplus::FontStyleBold);
+        Gdiplus::Font subtitleFont(&fontFamily, 10, Gdiplus::FontStyleRegular);
+        Gdiplus::SolidBrush textBrush(Gdiplus::Color(255, 255, 255, 255));
+        Gdiplus::SolidBrush subtitleBrush(Gdiplus::Color(180, 255, 255, 255));
+
+        int textX = 12 + NOTIF_PREVIEW_SIZE + 12;
+        graphics.DrawString(L"Screenshot saved", -1, &titleFont, Gdiplus::PointF((float)textX, 20.0f), &textBrush);
+
+        // Show filename only
+        std::wstring filename = g_app.lastScreenshotPath;
+        size_t lastSlash = filename.find_last_of(L"\\/");
+        if (lastSlash != std::wstring::npos) {
+            filename = filename.substr(lastSlash + 1);
+        }
+        if (filename.length() > 25) {
+            filename = filename.substr(0, 22) + L"...";
+        }
+        graphics.DrawString(filename.c_str(), -1, &subtitleFont, Gdiplus::PointF((float)textX, 42.0f), &subtitleBrush);
+
+        // Buttons
+        int btnY = (NOTIF_HEIGHT - NOTIF_BTN_SIZE) / 2;
+        int btnX = NOTIF_WIDTH - 12 - NOTIF_BTN_SIZE;
+
+        // Close button
+        g_notifButtons[2].rect = { btnX, btnY, btnX + NOTIF_BTN_SIZE, btnY + NOTIF_BTN_SIZE };
+        g_notifButtons[2].icon = L"\u2715";
+        g_notifButtons[2].tooltip = L"Close";
+
+        // Open folder button
+        btnX -= NOTIF_BTN_SIZE + 8;
+        g_notifButtons[1].rect = { btnX, btnY, btnX + NOTIF_BTN_SIZE, btnY + NOTIF_BTN_SIZE };
+        g_notifButtons[1].icon = L"\u2750";  // Folder icon
+        g_notifButtons[1].tooltip = L"Open folder";
+
+        // Copy button
+        btnX -= NOTIF_BTN_SIZE + 8;
+        g_notifButtons[0].rect = { btnX, btnY, btnX + NOTIF_BTN_SIZE, btnY + NOTIF_BTN_SIZE };
+        g_notifButtons[0].icon = L"\u2398";  // Copy icon
+        g_notifButtons[0].tooltip = L"Copy to clipboard";
+
+        Gdiplus::Font iconFont(&fontFamily, 14, Gdiplus::FontStyleRegular);
+        Gdiplus::StringFormat centerFormat;
+        centerFormat.SetAlignment(Gdiplus::StringAlignmentCenter);
+        centerFormat.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+
+        for (int i = 0; i < 3; i++) {
+            RECT& r = g_notifButtons[i].rect;
+            Gdiplus::Color btnColor = (g_app.notificationHovered == i)
+                ? Gdiplus::Color(255, 70, 70, 70)
+                : Gdiplus::Color(255, 50, 50, 50);
+            Gdiplus::SolidBrush btnBrush(btnColor);
+
+            Gdiplus::GraphicsPath btnPath;
+            btnPath.AddArc(r.left, r.top, 8, 8, 180, 90);
+            btnPath.AddArc(r.right - 8, r.top, 8, 8, 270, 90);
+            btnPath.AddArc(r.right - 8, r.bottom - 8, 8, 8, 0, 90);
+            btnPath.AddArc(r.left, r.bottom - 8, 8, 8, 90, 90);
+            btnPath.CloseFigure();
+            graphics.FillPath(&btnBrush, &btnPath);
+
+            Gdiplus::RectF btnRect((float)r.left, (float)r.top, (float)(r.right - r.left), (float)(r.bottom - r.top));
+            graphics.DrawString(g_notifButtons[i].icon, -1, &iconFont, btnRect, &centerFormat, &textBrush);
+        }
+
+        BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
+
+        SelectObject(hdc, hOldBitmap);
+        DeleteObject(hBitmap);
+        DeleteDC(hdc);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_MOUSEMOVE: {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+        POINT pt = { x, y };
+
+        int newHovered = -1;
+        for (int i = 0; i < 3; i++) {
+            if (PtInRect(&g_notifButtons[i].rect, pt)) {
+                newHovered = i;
+                break;
+            }
+        }
+
+        if (newHovered != g_app.notificationHovered) {
+            g_app.notificationHovered = newHovered;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+
+        // Track mouse leave
+        TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
+        TrackMouseEvent(&tme);
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        if (g_app.notificationHovered != -1) {
+            g_app.notificationHovered = -1;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+
+    case WM_LBUTTONDOWN: {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+        POINT pt = { x, y };
+
+        for (int i = 0; i < 3; i++) {
+            if (PtInRect(&g_notifButtons[i].rect, pt)) {
+                if (i == 0) {
+                    // Copy to clipboard
+                    Gdiplus::Bitmap* bmp = Gdiplus::Bitmap::FromFile(g_app.lastScreenshotPath.c_str());
+                    if (bmp && bmp->GetLastStatus() == Gdiplus::Ok) {
+                        HBITMAP hBmp;
+                        bmp->GetHBITMAP(Gdiplus::Color(255, 255, 255), &hBmp);
+                        if (OpenClipboard(hwnd)) {
+                            EmptyClipboard();
+                            SetClipboardData(CF_BITMAP, hBmp);
+                            CloseClipboard();
+                        }
+                        delete bmp;
+                    }
+                } else if (i == 1) {
+                    // Open folder and select file
+                    std::wstring cmd = L"/select,\"" + g_app.lastScreenshotPath + L"\"";
+                    ShellExecuteW(nullptr, L"open", L"explorer.exe", cmd.c_str(), nullptr, SW_SHOWNORMAL);
+                } else if (i == 2) {
+                    // Close
+                    HideNotification();
+                }
+                return 0;
+            }
+        }
+        return 0;
+    }
+
+    case WM_TIMER:
+        if (wParam == NOTIF_TIMER_ID) {
+            HideNotification();
+        }
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    default:
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+}
+
+void ShowNotification(const wchar_t* filepath) {
+    // Store path
+    g_app.lastScreenshotPath = filepath;
+
+    // Create preview
+    if (g_app.notificationPreview) {
+        DeleteObject(g_app.notificationPreview);
+    }
+    g_app.notificationPreview = CreatePreviewBitmap(filepath, NOTIF_PREVIEW_SIZE);
+
+    // Register class if needed
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = NotificationWndProc;
+        wc.hInstance = g_app.hInstance;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.lpszClassName = L"SnippingToolNotification";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+
+    // Hide existing notification if any
+    if (g_app.notificationWnd) {
+        KillTimer(g_app.notificationWnd, NOTIF_TIMER_ID);
+        DestroyWindow(g_app.notificationWnd);
+    }
+
+    // Position at bottom-right of screen
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int screenHeight = GetSystemMetrics(SM_CYSCREEN);
+    int x = screenWidth - NOTIF_WIDTH - 20;
+    int y = screenHeight - NOTIF_HEIGHT - 60;
+
+    g_app.notificationHovered = -1;
+    g_app.notificationWnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        L"SnippingToolNotification", L"",
+        WS_POPUP,
+        x, y, NOTIF_WIDTH, NOTIF_HEIGHT,
+        nullptr, nullptr, g_app.hInstance, nullptr
+    );
+
+    SetLayeredWindowAttributes(g_app.notificationWnd, 0, 255, LWA_ALPHA);
+    ShowWindow(g_app.notificationWnd, SW_SHOWNOACTIVATE);
+
+    // Auto-hide timer
+    SetTimer(g_app.notificationWnd, NOTIF_TIMER_ID, NOTIF_DURATION, nullptr);
+}
+
+void HideNotification() {
+    if (g_app.notificationWnd) {
+        KillTimer(g_app.notificationWnd, NOTIF_TIMER_ID);
+        DestroyWindow(g_app.notificationWnd);
+        g_app.notificationWnd = nullptr;
+    }
+    if (g_app.notificationPreview) {
+        DeleteObject(g_app.notificationPreview);
+        g_app.notificationPreview = nullptr;
+    }
+}
+
+//------------------------------------------------------------------------------
 // File Path Generation
 //------------------------------------------------------------------------------
 std::wstring GenerateAutoFilename() {
@@ -733,19 +1073,13 @@ void DrawToolbarButton(HDC hdc, const ToolbarButton& btn, bool isHovered) {
     if (btn.isToggle && btn.isActive) {
         bgColor = Colors::AccentDark;
         iconColor = Colors::Text;
-    } else if (btn.id == BTN_NEW) {
-        bgColor = isHovered ? Colors::AccentHover : Colors::Accent;
-        iconColor = RGB(0, 0, 0);  // Dark icon on accent
     } else {
         bgColor = isHovered ? Colors::SurfaceHover : Colors::Surface;
         iconColor = isHovered ? Colors::Text : Colors::TextSecondary;
     }
 
     DrawRoundedRect(hdc, btn.rect, 6, bgColor);
-
-    if (btn.id != BTN_NEW) {
-        DrawIcon(hdc, btn.id, btn.rect, iconColor);
-    }
+    DrawIcon(hdc, btn.id, btn.rect, iconColor);
 }
 
 void DrawDelayDropdown(HDC hdc, const RECT& rect, bool isHovered) {
@@ -797,12 +1131,8 @@ void UpdateButtonRects() {
     int x = 12;
     int y = (TOOLBAR_HEIGHT - BUTTON_SIZE) / 2;
 
-    // New button (wider, accent)
-    g_buttons[0].rect = { x, y, x + 56, y + BUTTON_SIZE };
-    x += 56 + 16;
-
     // Mode buttons (grouped together)
-    for (int i = 1; i <= 3; i++) {
+    for (int i = 0; i <= 2; i++) {
         g_buttons[i].rect = { x, y, x + BUTTON_SIZE, y + BUTTON_SIZE };
         x += BUTTON_SIZE + 4;
     }
@@ -810,11 +1140,11 @@ void UpdateButtonRects() {
     x += 12;
 
     // Delay dropdown
-    g_buttons[4].rect = { x, y, x + 70, y + BUTTON_SIZE };
+    g_buttons[3].rect = { x, y, x + 70, y + BUTTON_SIZE };
     x += 70 + 12;
 
     // Settings button
-    g_buttons[5].rect = { x, y, x + BUTTON_SIZE, y + BUTTON_SIZE };
+    g_buttons[4].rect = { x, y, x + BUTTON_SIZE, y + BUTTON_SIZE };
 }
 
 //------------------------------------------------------------------------------
@@ -1159,12 +1489,16 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
                 wcscpy_s(filepath, autoPath.c_str());
 
                 if (g_app.settings.autoSave) {
-                    if (!SaveScreenshot(captureRect, filepath)) {
+                    if (SaveScreenshot(captureRect, filepath)) {
+                        ShowNotification(filepath);
+                    } else {
                         MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                     }
                 } else {
                     if (ShowSaveDialog(filepath, MAX_PATH)) {
-                        if (!SaveScreenshot(captureRect, filepath)) {
+                        if (SaveScreenshot(captureRect, filepath)) {
+                            ShowNotification(filepath);
+                        } else {
                             MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                         }
                     }
@@ -1238,13 +1572,15 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 
                 if (g_app.settings.autoSave) {
                     if (SaveScreenshot(g_app.selectionRect, filepath)) {
-                        // Success notification could go here
+                        ShowNotification(filepath);
                     } else {
                         MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                     }
                 } else {
                     if (ShowSaveDialog(filepath, MAX_PATH)) {
-                        if (!SaveScreenshot(g_app.selectionRect, filepath)) {
+                        if (SaveScreenshot(g_app.selectionRect, filepath)) {
+                            ShowNotification(filepath);
+                        } else {
                             MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                         }
                     }
@@ -1294,12 +1630,16 @@ void CaptureFullscreen() {
     wcscpy_s(filepath, autoPath.c_str());
 
     if (g_app.settings.autoSave) {
-        if (!SaveScreenshot(fullscreen, filepath)) {
+        if (SaveScreenshot(fullscreen, filepath)) {
+            ShowNotification(filepath);
+        } else {
             MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
         }
     } else {
         if (ShowSaveDialog(filepath, MAX_PATH)) {
-            if (!SaveScreenshot(fullscreen, filepath)) {
+            if (SaveScreenshot(fullscreen, filepath)) {
+                ShowNotification(filepath);
+            } else {
                 MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
             }
         }
@@ -1325,7 +1665,7 @@ void ShowDelayMenu(HWND hwnd) {
     AppendMenuW(menu, MF_STRING | (g_app.delaySeconds == 5 ? MF_CHECKED : 0), 3, L"5 seconds");
     AppendMenuW(menu, MF_STRING | (g_app.delaySeconds == 10 ? MF_CHECKED : 0), 4, L"10 seconds");
 
-    RECT btnRect = g_buttons[4].rect;
+    RECT btnRect = g_buttons[3].rect;
     POINT pt = { btnRect.left, btnRect.bottom };
     ClientToScreen(hwnd, &pt);
 
@@ -2428,12 +2768,16 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                 wcscpy_s(filepath, autoPath.c_str());
 
                 if (g_app.settings.autoSave) {
-                    if (!SaveScreenshot(fullscreen, filepath)) {
+                    if (SaveScreenshot(fullscreen, filepath)) {
+                        ShowNotification(filepath);
+                    } else {
                         MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                     }
                 } else {
                     if (ShowSaveDialog(filepath, MAX_PATH)) {
-                        if (!SaveScreenshot(fullscreen, filepath)) {
+                        if (SaveScreenshot(fullscreen, filepath)) {
+                            ShowNotification(filepath);
+                        } else {
                             MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
                         }
                     }
@@ -2483,7 +2827,7 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
         // Draw all buttons
         for (int i = 0; i < NUM_BUTTONS; i++) {
-            if (i == 4) {
+            if (i == 3) {
                 DrawDelayDropdown(hdc, g_buttons[i].rect, g_app.hoveredButton == g_buttons[i].id);
             } else {
                 DrawToolbarButton(hdc, g_buttons[i], g_app.hoveredButton == g_buttons[i].id);
@@ -2493,22 +2837,13 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         // Draw subtle divider only between mode buttons and delay
         HPEN divPen = CreatePen(PS_SOLID, 1, Colors::Divider);
         HPEN oldPen = (HPEN)SelectObject(hdc, divPen);
-        int divX = g_buttons[3].rect.right + 6;
+        int divX = g_buttons[2].rect.right + 6;
         int divTop = TOOLBAR_HEIGHT / 2 - 10;
         int divBottom = TOOLBAR_HEIGHT / 2 + 10;
         MoveToEx(hdc, divX, divTop, nullptr);
         LineTo(hdc, divX, divBottom);
         SelectObject(hdc, oldPen);
         DeleteObject(divPen);
-
-        // New button content - just "New" text centered
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, RGB(0, 0, 0));  // Dark text on accent button
-
-        HFONT oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
-        RECT newRect = g_buttons[0].rect;
-        DrawTextW(hdc, L"+ New", -1, &newRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        SelectObject(hdc, oldFont);
 
         // Copy to screen
         BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
@@ -2571,29 +2906,26 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             POINT pt = { x, y };
             if (PtInRect(&g_buttons[i].rect, pt)) {
                 switch (g_buttons[i].id) {
-                case BTN_NEW:
-                    StartCapture();
-                    break;
                 case BTN_MODE_RECT:
                     g_app.captureMode = MODE_RECTANGLE;
-                    g_buttons[1].isActive = true;
+                    g_buttons[0].isActive = true;
+                    g_buttons[1].isActive = false;
                     g_buttons[2].isActive = false;
-                    g_buttons[3].isActive = false;
-                    InvalidateRect(hwnd, nullptr, TRUE);
+                    StartCapture();
                     break;
                 case BTN_MODE_WINDOW:
                     g_app.captureMode = MODE_WINDOW;
-                    g_buttons[1].isActive = false;
-                    g_buttons[2].isActive = true;
-                    g_buttons[3].isActive = false;
-                    InvalidateRect(hwnd, nullptr, TRUE);
+                    g_buttons[0].isActive = false;
+                    g_buttons[1].isActive = true;
+                    g_buttons[2].isActive = false;
+                    StartCapture();
                     break;
                 case BTN_MODE_FULLSCREEN:
                     g_app.captureMode = MODE_FULLSCREEN;
+                    g_buttons[0].isActive = false;
                     g_buttons[1].isActive = false;
-                    g_buttons[2].isActive = false;
-                    g_buttons[3].isActive = true;
-                    InvalidateRect(hwnd, nullptr, TRUE);
+                    g_buttons[2].isActive = true;
+                    StartCapture();
                     break;
                 case BTN_DELAY:
                     ShowDelayMenu(hwnd);
