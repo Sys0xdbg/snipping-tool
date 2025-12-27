@@ -64,6 +64,7 @@ namespace Colors {
 #define HOTKEY_RECTANGLE  1
 #define HOTKEY_WINDOW     2
 #define HOTKEY_FULLSCREEN 3
+#define HOTKEY_PRINTSCREEN 4
 
 // Hotkey structure
 struct HotkeyConfig {
@@ -108,10 +109,14 @@ struct Settings {
 struct AppState {
     HWND mainWnd = nullptr;
     HWND overlayWnd = nullptr;
+    HWND modePickerWnd = nullptr;
     HINSTANCE hInstance = nullptr;
 
     // Low-level keyboard hook for intercepting Win+Shift+S
     HHOOK keyboardHook = nullptr;
+
+    // Mode picker state
+    int modePickerHovered = -1;
 
     // UI state
     CaptureMode captureMode = MODE_RECTANGLE;
@@ -364,6 +369,10 @@ void RegisterHotkeys() {
     UnregisterHotKey(g_app.mainWnd, HOTKEY_RECTANGLE);
     UnregisterHotKey(g_app.mainWnd, HOTKEY_WINDOW);
     UnregisterHotKey(g_app.mainWnd, HOTKEY_FULLSCREEN);
+    UnregisterHotKey(g_app.mainWnd, HOTKEY_PRINTSCREEN);
+
+    // Print Screen hotkey - always enabled
+    RegisterHotKey(g_app.mainWnd, HOTKEY_PRINTSCREEN, MOD_NOREPEAT, VK_SNAPSHOT);
 
     // Rectangle hotkey - skip if it's Win+Shift+S and we're using the keyboard hook
     if (g_app.settings.hotkeyRect.enabled && g_app.settings.hotkeyRect.vk != 0) {
@@ -1105,6 +1114,232 @@ void ShowDelayMenu(HWND hwnd) {
 // Other
 #define IDC_REPLACE_WINDOWS     140
 #define IDC_RUN_STARTUP         141
+
+//------------------------------------------------------------------------------
+// Mode Picker Overlay (shown when Print Screen is pressed)
+//------------------------------------------------------------------------------
+const int MODE_PICKER_WIDTH = 280;
+const int MODE_PICKER_HEIGHT = 56;
+const int MODE_PICKER_BTN_SIZE = 44;
+
+struct ModePickerBtn {
+    int mode;
+    const wchar_t* icon;
+    const wchar_t* tooltip;
+    RECT rect;
+};
+
+ModePickerBtn g_modePickerBtns[] = {
+    { MODE_RECTANGLE, L"\u25AD", L"Rectangle", {} },
+    { MODE_WINDOW, L"\u2750", L"Window", {} },
+    { MODE_FULLSCREEN, L"\u2B1C", L"Fullscreen", {} },
+    { -1, L"\u2715", L"Close", {} },
+};
+
+void ShowModePicker();
+void HideModePicker();
+
+LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdcScreen = BeginPaint(hwnd, &ps);
+
+        RECT clientRect;
+        GetClientRect(hwnd, &clientRect);
+
+        // Double buffering
+        HDC hdc = CreateCompatibleDC(hdcScreen);
+        HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, clientRect.right, clientRect.bottom);
+        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdc, hBitmap);
+
+        // Background with rounded corners using GDI+
+        Gdiplus::Graphics graphics(hdc);
+        graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+
+        // Dark background
+        Gdiplus::SolidBrush bgBrush(Gdiplus::Color(245, 40, 40, 40));
+        Gdiplus::GraphicsPath bgPath;
+        int radius = 12;
+        bgPath.AddArc(0, 0, radius * 2, radius * 2, 180, 90);
+        bgPath.AddArc(clientRect.right - radius * 2, 0, radius * 2, radius * 2, 270, 90);
+        bgPath.AddArc(clientRect.right - radius * 2, clientRect.bottom - radius * 2, radius * 2, radius * 2, 0, 90);
+        bgPath.AddArc(0, clientRect.bottom - radius * 2, radius * 2, radius * 2, 90, 90);
+        bgPath.CloseFigure();
+        graphics.FillPath(&bgBrush, &bgPath);
+
+        // Border
+        Gdiplus::Pen borderPen(Gdiplus::Color(255, 60, 60, 60), 1.0f);
+        graphics.DrawPath(&borderPen, &bgPath);
+
+        // Draw buttons
+        int x = 16;
+        int y = (MODE_PICKER_HEIGHT - MODE_PICKER_BTN_SIZE) / 2;
+
+        for (int i = 0; i < 4; i++) {
+            g_modePickerBtns[i].rect = { x, y, x + MODE_PICKER_BTN_SIZE, y + MODE_PICKER_BTN_SIZE };
+
+            bool isHovered = (g_app.modePickerHovered == i);
+
+            // Button background
+            if (isHovered) {
+                Gdiplus::SolidBrush hoverBrush(Gdiplus::Color(255, 70, 70, 70));
+                graphics.FillEllipse(&hoverBrush, x + 2, y + 2, MODE_PICKER_BTN_SIZE - 4, MODE_PICKER_BTN_SIZE - 4);
+            }
+
+            // Draw icon
+            HFONT iconFont = CreateFontW(20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI Symbol");
+            HFONT oldFont = (HFONT)SelectObject(hdc, iconFont);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, i == 3 ? RGB(200, 200, 200) : RGB(255, 255, 255));
+
+            RECT iconRect = g_modePickerBtns[i].rect;
+            DrawTextW(hdc, g_modePickerBtns[i].icon, -1, &iconRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+
+            SelectObject(hdc, oldFont);
+            DeleteObject(iconFont);
+
+            // Add divider before close button
+            if (i == 2) {
+                Gdiplus::Pen divPen(Gdiplus::Color(255, 80, 80, 80), 1.0f);
+                graphics.DrawLine(&divPen, x + MODE_PICKER_BTN_SIZE + 10, y + 8, x + MODE_PICKER_BTN_SIZE + 10, y + MODE_PICKER_BTN_SIZE - 8);
+                x += 20;
+            }
+
+            x += MODE_PICKER_BTN_SIZE + 8;
+        }
+
+        // Copy to screen
+        BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
+
+        SelectObject(hdc, hOldBitmap);
+        DeleteObject(hBitmap);
+        DeleteDC(hdc);
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_MOUSEMOVE: {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+        POINT pt = { x, y };
+
+        int newHovered = -1;
+        for (int i = 0; i < 4; i++) {
+            if (PtInRect(&g_modePickerBtns[i].rect, pt)) {
+                newHovered = i;
+                break;
+            }
+        }
+
+        if (newHovered != g_app.modePickerHovered) {
+            g_app.modePickerHovered = newHovered;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+
+        TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
+        TrackMouseEvent(&tme);
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        g_app.modePickerHovered = -1;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_LBUTTONDOWN: {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+        POINT pt = { x, y };
+
+        for (int i = 0; i < 4; i++) {
+            if (PtInRect(&g_modePickerBtns[i].rect, pt)) {
+                HideModePicker();
+                if (g_modePickerBtns[i].mode >= 0) {
+                    // Trigger capture with selected mode
+                    PostMessageW(g_app.mainWnd, WM_USER + 101, g_modePickerBtns[i].mode, 0);
+                }
+                return 0;
+            }
+        }
+        return 0;
+    }
+
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE) {
+            HideModePicker();
+            return 0;
+        }
+        break;
+
+    case WM_KILLFOCUS:
+        HideModePicker();
+        return 0;
+
+    case WM_ERASEBKGND:
+        return 1;
+
+    default:
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+void ShowModePicker() {
+    if (g_app.modePickerWnd && IsWindowVisible(g_app.modePickerWnd)) {
+        HideModePicker();
+        return;
+    }
+
+    // Register class if needed
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = ModePickerWndProc;
+        wc.hInstance = g_app.hInstance;
+        wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+        wc.lpszClassName = L"SnippingToolModePicker";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+
+    // Position at top-center of screen
+    int screenWidth = GetSystemMetrics(SM_CXSCREEN);
+    int x = (screenWidth - MODE_PICKER_WIDTH) / 2;
+    int y = 40;
+
+    g_app.modePickerHovered = -1;
+
+    g_app.modePickerWnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        L"SnippingToolModePicker", L"",
+        WS_POPUP,
+        x, y, MODE_PICKER_WIDTH, MODE_PICKER_HEIGHT,
+        nullptr, nullptr, g_app.hInstance, nullptr
+    );
+
+    // Set layered window for transparency
+    SetLayeredWindowAttributes(g_app.modePickerWnd, 0, 255, LWA_ALPHA);
+
+    // Make it rounded
+    HRGN rgn = CreateRoundRectRgn(0, 0, MODE_PICKER_WIDTH + 1, MODE_PICKER_HEIGHT + 1, 12, 12);
+    SetWindowRgn(g_app.modePickerWnd, rgn, TRUE);
+
+    ShowWindow(g_app.modePickerWnd, SW_SHOWNOACTIVATE);
+    SetForegroundWindow(g_app.modePickerWnd);
+    SetFocus(g_app.modePickerWnd);
+}
+
+void HideModePicker() {
+    if (g_app.modePickerWnd) {
+        DestroyWindow(g_app.modePickerWnd);
+        g_app.modePickerWnd = nullptr;
+    }
+}
 
 // Settings window state
 struct SettingsState {
@@ -1855,6 +2090,19 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
             g_app.captureMode = MODE_FULLSCREEN;
             CaptureFullscreen();
             break;
+        case HOTKEY_PRINTSCREEN:
+            ShowModePicker();
+            break;
+        }
+        return 0;
+
+    case WM_USER + 101:
+        // Mode selected from mode picker
+        g_app.captureMode = (CaptureMode)wParam;
+        if (g_app.captureMode == MODE_FULLSCREEN) {
+            CaptureFullscreen();
+        } else {
+            ShowOverlay();
         }
         return 0;
 
