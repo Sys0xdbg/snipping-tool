@@ -19,6 +19,7 @@
 #include <sstream>
 #include <chrono>
 #include <iomanip>
+#include <vector>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -130,6 +131,11 @@ struct AppState {
     POINT startPoint = {};
     POINT endPoint = {};
     RECT selectionRect = {};
+
+    // Window capture mode
+    HWND hoveredWindow = nullptr;
+    RECT hoveredWindowRect = {};
+    std::vector<std::pair<HWND, RECT>> windowList;  // Cached window list for window capture
 
     // Captured screenshot
     ComPtr<ID3D11Device> device;
@@ -938,6 +944,45 @@ HBITMAP CaptureScreenToBitmap() {
 
 void StartCapture();
 
+// Callback for EnumWindows to build window list
+BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam) {
+    // Skip invisible windows
+    if (!IsWindowVisible(hwnd)) return TRUE;
+
+    // Skip minimized windows
+    if (IsIconic(hwnd)) return TRUE;
+
+    // Skip our own windows
+    if (hwnd == g_app.mainWnd || hwnd == g_app.overlayWnd) return TRUE;
+
+    // Get window rect
+    RECT rect;
+    if (GetWindowRect(hwnd, &rect)) {
+        // Skip zero-size windows
+        if (rect.right > rect.left && rect.bottom > rect.top) {
+            g_app.windowList.push_back({ hwnd, rect });
+        }
+    }
+
+    return TRUE;
+}
+
+void CacheWindowList() {
+    g_app.windowList.clear();
+    EnumWindows(EnumWindowsCallback, 0);
+
+    // Sort by z-order (topmost first) - EnumWindows already does this
+}
+
+HWND FindWindowAtPoint(POINT pt) {
+    for (const auto& entry : g_app.windowList) {
+        if (PtInRect(&entry.second, pt)) {
+            return entry.first;
+        }
+    }
+    return nullptr;
+}
+
 void ShowOverlay() {
     ShowWindow(g_app.mainWnd, SW_HIDE);
 
@@ -958,6 +1003,9 @@ void ShowOverlay() {
     }
     g_app.overlayBitmap = CaptureScreenToBitmap();
 
+    // Cache window list for window capture mode
+    CacheWindowList();
+
     int width = GetSystemMetrics(SM_CXSCREEN);
     int height = GetSystemMetrics(SM_CYSCREEN);
 
@@ -972,6 +1020,10 @@ void HideOverlay() {
     ReleaseCapture();
     ShowWindow(g_app.overlayWnd, SW_HIDE);
     ShowWindow(g_app.mainWnd, SW_SHOW);
+
+    // Reset window capture state
+    g_app.hoveredWindow = nullptr;
+    SetRectEmpty(&g_app.hoveredWindowRect);
 }
 
 void NormalizeRect(RECT& r) {
@@ -1012,34 +1064,44 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         DeleteObject(overlayBmp);
         DeleteDC(overlayDC);
 
-        if (g_app.isSelecting) {
-            RECT sel = g_app.selectionRect;
+        // Draw selection or window highlight
+        RECT sel = {};
+        bool hasSelection = false;
+
+        if (g_app.captureMode == MODE_WINDOW && g_app.hoveredWindow && !IsRectEmpty(&g_app.hoveredWindowRect)) {
+            // Window mode - use hovered window rect
+            sel = g_app.hoveredWindowRect;
+            hasSelection = true;
+        } else if (g_app.isSelecting) {
+            // Rectangle mode - use selection rect
+            sel = g_app.selectionRect;
             NormalizeRect(sel);
+            hasSelection = (sel.right > sel.left && sel.bottom > sel.top);
+        }
 
-            if (sel.right > sel.left && sel.bottom > sel.top) {
-                BitBlt(memDC, sel.left, sel.top, sel.right - sel.left, sel.bottom - sel.top,
-                       srcDC, sel.left, sel.top, SRCCOPY);
+        if (hasSelection) {
+            BitBlt(memDC, sel.left, sel.top, sel.right - sel.left, sel.bottom - sel.top,
+                   srcDC, sel.left, sel.top, SRCCOPY);
 
-                HPEN pen = CreatePen(PS_SOLID, 2, Colors::Accent);
-                HPEN oldPen = (HPEN)SelectObject(memDC, pen);
-                HBRUSH oldBrush = (HBRUSH)SelectObject(memDC, GetStockObject(NULL_BRUSH));
-                Rectangle(memDC, sel.left, sel.top, sel.right, sel.bottom);
-                SelectObject(memDC, oldPen);
-                SelectObject(memDC, oldBrush);
-                DeleteObject(pen);
+            HPEN pen = CreatePen(PS_SOLID, 2, Colors::Accent);
+            HPEN oldPen = (HPEN)SelectObject(memDC, pen);
+            HBRUSH oldBrush = (HBRUSH)SelectObject(memDC, GetStockObject(NULL_BRUSH));
+            Rectangle(memDC, sel.left, sel.top, sel.right, sel.bottom);
+            SelectObject(memDC, oldPen);
+            SelectObject(memDC, oldBrush);
+            DeleteObject(pen);
 
-                wchar_t sizeText[64];
-                swprintf_s(sizeText, L"%d x %d", sel.right - sel.left, sel.bottom - sel.top);
+            wchar_t sizeText[64];
+            swprintf_s(sizeText, L"%d x %d", sel.right - sel.left, sel.bottom - sel.top);
 
-                RECT sizeRect = { sel.left, sel.bottom + 8, sel.left + 100, sel.bottom + 30 };
-                DrawRoundedRect(memDC, sizeRect, 4, RGB(40, 40, 40));
+            RECT sizeRect = { sel.left, sel.bottom + 8, sel.left + 100, sel.bottom + 30 };
+            DrawRoundedRect(memDC, sizeRect, 4, RGB(40, 40, 40));
 
-                SetBkMode(memDC, TRANSPARENT);
-                SetTextColor(memDC, Colors::Text);
-                HFONT oldFont = (HFONT)SelectObject(memDC, g_app.fontSmall);
-                DrawTextW(memDC, sizeText, -1, &sizeRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-                SelectObject(memDC, oldFont);
-            }
+            SetBkMode(memDC, TRANSPARENT);
+            SetTextColor(memDC, Colors::Text);
+            HFONT oldFont = (HFONT)SelectObject(memDC, g_app.fontSmall);
+            DrawTextW(memDC, sizeText, -1, &sizeRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            SelectObject(memDC, oldFont);
         }
 
         SelectObject(srcDC, oldSrcBitmap);
@@ -1049,7 +1111,9 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         SetTextColor(memDC, Colors::Text);
         HFONT oldFont = (HFONT)SelectObject(memDC, g_app.fontRegular);
 
-        const wchar_t* text = L"Click and drag to select area  -  Press ESC to cancel";
+        const wchar_t* text = (g_app.captureMode == MODE_WINDOW)
+            ? L"Click on a window to capture it  -  Press ESC to cancel"
+            : L"Click and drag to select area  -  Press ESC to cancel";
         RECT textRect = { 0, 20, width, 50 };
         DrawTextW(memDC, text, -1, &textRect, DT_CENTER | DT_SINGLELINE);
         SelectObject(memDC, oldFont);
@@ -1065,26 +1129,77 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
     }
 
     case WM_LBUTTONDOWN:
-        g_app.isSelecting = true;
-        g_app.startPoint.x = GET_X_LPARAM(lParam);
-        g_app.startPoint.y = GET_Y_LPARAM(lParam);
-        g_app.endPoint = g_app.startPoint;
-        g_app.selectionRect = { g_app.startPoint.x, g_app.startPoint.y,
-                                g_app.startPoint.x, g_app.startPoint.y };
+        if (g_app.captureMode == MODE_WINDOW) {
+            // In window mode, capture the hovered window immediately
+            if (g_app.hoveredWindow && !IsRectEmpty(&g_app.hoveredWindowRect)) {
+                RECT captureRect = g_app.hoveredWindowRect;
+                HideOverlay();
+
+                std::wstring autoPath = GenerateAutoFilename();
+                wchar_t filepath[MAX_PATH];
+                wcscpy_s(filepath, autoPath.c_str());
+
+                if (g_app.settings.autoSave) {
+                    if (!SaveScreenshot(captureRect, filepath)) {
+                        MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
+                    }
+                } else {
+                    if (ShowSaveDialog(filepath, MAX_PATH)) {
+                        if (!SaveScreenshot(captureRect, filepath)) {
+                            MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Rectangle mode - start selection
+            g_app.isSelecting = true;
+            g_app.startPoint.x = GET_X_LPARAM(lParam);
+            g_app.startPoint.y = GET_Y_LPARAM(lParam);
+            g_app.endPoint = g_app.startPoint;
+            g_app.selectionRect = { g_app.startPoint.x, g_app.startPoint.y,
+                                    g_app.startPoint.x, g_app.startPoint.y };
+        }
         return 0;
 
-    case WM_MOUSEMOVE:
-        if (g_app.isSelecting) {
-            g_app.endPoint.x = GET_X_LPARAM(lParam);
-            g_app.endPoint.y = GET_Y_LPARAM(lParam);
+    case WM_MOUSEMOVE: {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+
+        if (g_app.captureMode == MODE_WINDOW) {
+            // Find window under cursor using cached window list
+            POINT screenPt = { x, y };
+            ClientToScreen(hwnd, &screenPt);
+
+            HWND targetWnd = FindWindowAtPoint(screenPt);
+
+            if (targetWnd && targetWnd != g_app.hoveredWindow) {
+                g_app.hoveredWindow = targetWnd;
+                // Find the rect from our cached list
+                for (const auto& entry : g_app.windowList) {
+                    if (entry.first == targetWnd) {
+                        g_app.hoveredWindowRect = entry.second;
+                        break;
+                    }
+                }
+                InvalidateRect(hwnd, nullptr, FALSE);
+            } else if (!targetWnd && g_app.hoveredWindow) {
+                g_app.hoveredWindow = nullptr;
+                SetRectEmpty(&g_app.hoveredWindowRect);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        } else if (g_app.isSelecting) {
+            g_app.endPoint.x = x;
+            g_app.endPoint.y = y;
             g_app.selectionRect = { g_app.startPoint.x, g_app.startPoint.y,
                                     g_app.endPoint.x, g_app.endPoint.y };
             InvalidateRect(hwnd, nullptr, FALSE);
         }
         return 0;
+    }
 
     case WM_LBUTTONUP:
-        if (g_app.isSelecting) {
+        if (g_app.captureMode == MODE_RECTANGLE && g_app.isSelecting) {
             g_app.isSelecting = false;
             g_app.endPoint.x = GET_X_LPARAM(lParam);
             g_app.endPoint.y = GET_Y_LPARAM(lParam);
@@ -1457,6 +1572,9 @@ void ShowModePicker() {
         DeleteObject(g_app.overlayBitmap);
     }
     g_app.overlayBitmap = CaptureScreenToBitmap();
+
+    // Cache window list for window capture mode
+    CacheWindowList();
 
     // Show darkened overlay
     int width = GetSystemMetrics(SM_CXSCREEN);
