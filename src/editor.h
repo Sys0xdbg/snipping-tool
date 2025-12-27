@@ -107,6 +107,7 @@ struct EditorState {
     Gdiplus::Color currentColor = Gdiplus::Color(255, 255, 0, 0);  // Red
     float currentThickness = 3.0f;
     int currentBlurSize = 12;
+    float currentTextSize = 24.0f;
 
     // Drawing state
     bool isDrawing = false;
@@ -138,6 +139,15 @@ struct EditorState {
     int hoveredColorIndex = -1;
     bool unsavedChanges = false;
 
+    // Slider popup state
+    bool sliderVisible = false;
+    RECT sliderRect = {};
+    int sliderToolIndex = -1;  // Which tool's slider is shown
+    float sliderValue = 0;
+    float sliderMin = 1;
+    float sliderMax = 20;
+    bool sliderDragging = false;
+
     // Undo/Redo
     UndoManager* undoManager = nullptr;
 
@@ -145,6 +155,9 @@ struct EditorState {
     RECT toolbarRect = {};
     RECT canvasRect = {};
     RECT colorPickerRect = {};
+    RECT undoRect = {};
+    RECT redoRect = {};
+    RECT saveRect = {};
 };
 
 // Predefined colors for picker

@@ -537,78 +537,42 @@ void DrawEditorToolbar(HDC hdc, EditorState* state) {
         DeleteObject(colorBrush);
     }
 
-    x = state->colorPickerRect.right + 20;
+    x = state->colorPickerRect.right + 12;
 
-    // Undo/Redo buttons
-    RECT undoRect = { x, y, x + EDITOR_TOOL_SIZE, y + EDITOR_TOOL_SIZE };
+    // Draw separator
+    HPEN sepPen2 = CreatePen(PS_SOLID, 1, Colors::Divider);
+    SelectObject(hdc, sepPen2);
+    MoveToEx(hdc, x, y + 4, nullptr);
+    LineTo(hdc, x, y + EDITOR_TOOL_SIZE - 4);
+    DeleteObject(sepPen2);
+    x += 12;
+
+    // Undo/Redo buttons - store positions in state for click handling
+    state->undoRect = { x, y, x + EDITOR_TOOL_SIZE, y + EDITOR_TOOL_SIZE };
     bool canUndo = state->undoManager && state->undoManager->CanUndo();
-    DrawRoundedRect(hdc, undoRect, 6, canUndo ? Colors::Surface : Colors::Background);
+    DrawRoundedRect(hdc, state->undoRect, 6, canUndo ? Colors::Surface : Colors::Background);
     SetTextColor(hdc, canUndo ? Colors::Text : Colors::TextDim);
     HFONT oldFont = (HFONT)SelectObject(hdc, g_app.fontIcon);
-    DrawTextW(hdc, L"\u21B6", -1, &undoRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(hdc, L"\u21B6", -1, &state->undoRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(hdc, oldFont);
     x += EDITOR_TOOL_SIZE + 4;
 
-    RECT redoRect = { x, y, x + EDITOR_TOOL_SIZE, y + EDITOR_TOOL_SIZE };
+    state->redoRect = { x, y, x + EDITOR_TOOL_SIZE, y + EDITOR_TOOL_SIZE };
     bool canRedo = state->undoManager && state->undoManager->CanRedo();
-    DrawRoundedRect(hdc, redoRect, 6, canRedo ? Colors::Surface : Colors::Background);
+    DrawRoundedRect(hdc, state->redoRect, 6, canRedo ? Colors::Surface : Colors::Background);
     SetTextColor(hdc, canRedo ? Colors::Text : Colors::TextDim);
     oldFont = (HFONT)SelectObject(hdc, g_app.fontIcon);
-    DrawTextW(hdc, L"\u21B7", -1, &redoRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(hdc, L"\u21B7", -1, &state->redoRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(hdc, oldFont);
     x += EDITOR_TOOL_SIZE + 20;
 
     // Save button
-    RECT saveRect = { x, y, x + 60, y + EDITOR_TOOL_SIZE };
-    DrawRoundedRect(hdc, saveRect, 6, Colors::AccentDark);
+    state->saveRect = { x, y, x + 60, y + EDITOR_TOOL_SIZE };
+    DrawRoundedRect(hdc, state->saveRect, 6, Colors::AccentDark);
     SetTextColor(hdc, Colors::Text);
     oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
-    DrawTextW(hdc, L"Save", -1, &saveRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    DrawTextW(hdc, L"Save", -1, &state->saveRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(hdc, oldFont);
-
-    // Draw tooltip if hovering over a tool button
-    if (state->hoveredTool >= 0 && state->hoveredTool <= (int)EditorTool::Crop) {
-        const wchar_t* tooltipText = TOOL_NAMES[state->hoveredTool];
-
-        // Calculate tooltip position (below the button)
-        int tooltipX = 12 + state->hoveredTool * (EDITOR_TOOL_SIZE + 4);
-        int tooltipY = EDITOR_TOOLBAR_HEIGHT - 2;
-
-        // Measure text
-        SIZE textSize;
-        oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
-        GetTextExtentPoint32W(hdc, tooltipText, (int)wcslen(tooltipText), &textSize);
-
-        int padding = 8;
-        RECT tipRect = {
-            tooltipX,
-            tooltipY,
-            tooltipX + textSize.cx + padding * 2,
-            tooltipY + textSize.cy + padding
-        };
-
-        // Draw tooltip background
-        HBRUSH tipBrush = CreateSolidBrush(RGB(50, 50, 55));
-        FillRect(hdc, &tipRect, tipBrush);
-        DeleteObject(tipBrush);
-
-        // Draw border
-        HPEN tipPen = CreatePen(PS_SOLID, 1, Colors::Divider);
-        HPEN oldPen = (HPEN)SelectObject(hdc, tipPen);
-        HBRUSH oldBrushTip = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
-        Rectangle(hdc, tipRect.left, tipRect.top, tipRect.right, tipRect.bottom);
-        SelectObject(hdc, oldPen);
-        SelectObject(hdc, oldBrushTip);
-        DeleteObject(tipPen);
-
-        // Draw text
-        SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, Colors::Text);
-        tipRect.left += padding;
-        tipRect.top += padding / 2;
-        DrawTextW(hdc, tooltipText, -1, &tipRect, DT_LEFT | DT_TOP);
-        SelectObject(hdc, oldFont);
-    }
 }
 
 void DrawEditorCanvas(HDC hdc, EditorState* state) {
@@ -718,7 +682,7 @@ void DrawEditorCanvas(HDC hdc, EditorState* state) {
         int ty = (int)(state->textPosition.y * state->zoom) + canvas.top + centerY;
 
         Gdiplus::FontFamily family(L"Segoe UI");
-        Gdiplus::Font font(&family, 16 * state->zoom);
+        Gdiplus::Font font(&family, state->currentTextSize * state->zoom);
         Gdiplus::SolidBrush brush(state->currentColor);
 
         if (!state->textBuffer.empty()) {
@@ -844,6 +808,145 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         DrawEditorToolbar(memDC, state);
         DrawEditorCanvas(memDC, state);
 
+        // Draw tooltip on top of everything
+        if (state->hoveredTool >= 0 && state->hoveredTool <= (int)EditorTool::Crop) {
+            const wchar_t* tooltipText = TOOL_NAMES[state->hoveredTool];
+
+            // Calculate button position for tooltip
+            int btnX = 12 + state->hoveredTool * (EDITOR_TOOL_SIZE + 4);
+            int btnY = (EDITOR_TOOLBAR_HEIGHT - EDITOR_TOOL_SIZE) / 2;
+
+            // Draw highlight box around hovered button
+            HPEN highlightPen = CreatePen(PS_SOLID, 2, RGB(76, 194, 255));
+            HPEN oldPen = (HPEN)SelectObject(memDC, highlightPen);
+            HBRUSH oldBrush = (HBRUSH)SelectObject(memDC, GetStockObject(NULL_BRUSH));
+            RoundRect(memDC, btnX - 2, btnY - 2, btnX + EDITOR_TOOL_SIZE + 2, btnY + EDITOR_TOOL_SIZE + 2, 8, 8);
+            SelectObject(memDC, oldPen);
+            SelectObject(memDC, oldBrush);
+            DeleteObject(highlightPen);
+
+            // Measure tooltip text
+            HFONT oldFont = (HFONT)SelectObject(memDC, g_app.fontSmall);
+            SIZE textSize;
+            GetTextExtentPoint32W(memDC, tooltipText, (int)wcslen(tooltipText), &textSize);
+
+            int padding = 8;
+            int tipX = btnX;
+            int tipY = btnY + EDITOR_TOOL_SIZE + 8;
+
+            // Make sure tooltip doesn't go off screen
+            if (tipX + textSize.cx + padding * 2 > width) {
+                tipX = width - textSize.cx - padding * 2 - 5;
+            }
+
+            RECT tipRect = {
+                tipX,
+                tipY,
+                tipX + textSize.cx + padding * 2,
+                tipY + textSize.cy + padding
+            };
+
+            // Draw tooltip background with shadow
+            RECT shadowRect = { tipRect.left + 2, tipRect.top + 2, tipRect.right + 2, tipRect.bottom + 2 };
+            HBRUSH shadowBrush = CreateSolidBrush(RGB(20, 20, 20));
+            FillRect(memDC, &shadowRect, shadowBrush);
+            DeleteObject(shadowBrush);
+
+            // Draw tooltip background
+            HBRUSH tipBrush = CreateSolidBrush(RGB(60, 60, 65));
+            FillRect(memDC, &tipRect, tipBrush);
+            DeleteObject(tipBrush);
+
+            // Draw tooltip border
+            HPEN tipPen = CreatePen(PS_SOLID, 1, RGB(100, 100, 105));
+            oldPen = (HPEN)SelectObject(memDC, tipPen);
+            oldBrush = (HBRUSH)SelectObject(memDC, GetStockObject(NULL_BRUSH));
+            Rectangle(memDC, tipRect.left, tipRect.top, tipRect.right, tipRect.bottom);
+            SelectObject(memDC, oldPen);
+            SelectObject(memDC, oldBrush);
+            DeleteObject(tipPen);
+
+            // Draw tooltip text
+            SetBkMode(memDC, TRANSPARENT);
+            SetTextColor(memDC, RGB(255, 255, 255));
+            tipRect.left += padding;
+            tipRect.top += padding / 2;
+            DrawTextW(memDC, tooltipText, -1, &tipRect, DT_LEFT | DT_TOP);
+            SelectObject(memDC, oldFont);
+        }
+
+        // Draw slider popup if visible (using GDI+ for smooth rendering)
+        if (state->sliderVisible) {
+            Gdiplus::Graphics gSlider(memDC);
+            gSlider.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            gSlider.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
+
+            RECT& sr = state->sliderRect;
+
+            // Shadow
+            Gdiplus::SolidBrush shadowBrush(Gdiplus::Color(100, 0, 0, 0));
+            gSlider.FillRectangle(&shadowBrush, sr.left + 3, sr.top + 3, sr.right - sr.left, sr.bottom - sr.top);
+
+            // Background with rounded corners
+            Gdiplus::SolidBrush bgBrush(Gdiplus::Color(255, 45, 45, 50));
+            Gdiplus::Pen borderPen(Gdiplus::Color(255, 80, 80, 85), 1);
+
+            int radius = 8;
+            Gdiplus::GraphicsPath path;
+            path.AddArc(sr.left, sr.top, radius * 2, radius * 2, 180, 90);
+            path.AddArc(sr.right - radius * 2, sr.top, radius * 2, radius * 2, 270, 90);
+            path.AddArc(sr.right - radius * 2, sr.bottom - radius * 2, radius * 2, radius * 2, 0, 90);
+            path.AddArc(sr.left, sr.bottom - radius * 2, radius * 2, radius * 2, 90, 90);
+            path.CloseFigure();
+
+            gSlider.FillPath(&bgBrush, &path);
+            gSlider.DrawPath(&borderPen, &path);
+
+            // Label
+            const wchar_t* label = L"Size";
+            if (state->sliderToolIndex == (int)EditorTool::Blur) label = L"Blur";
+            else if (state->sliderToolIndex == (int)EditorTool::Text) label = L"Font Size";
+
+            Gdiplus::FontFamily family(L"Segoe UI");
+            Gdiplus::Font labelFont(&family, 11);
+            Gdiplus::SolidBrush labelBrush(Gdiplus::Color(255, 180, 180, 180));
+            gSlider.DrawString(label, -1, &labelFont, Gdiplus::PointF((float)sr.left + 12, (float)sr.top + 8), &labelBrush);
+
+            // Value
+            wchar_t valueStr[32];
+            swprintf_s(valueStr, L"%.0f", state->sliderValue);
+            Gdiplus::SolidBrush valueBrush(Gdiplus::Color(255, 255, 255, 255));
+            Gdiplus::RectF valueRect((float)sr.left + 12, (float)sr.top + 8, (float)(sr.right - sr.left - 24), 20);
+            Gdiplus::StringFormat rightAlign;
+            rightAlign.SetAlignment(Gdiplus::StringAlignmentFar);
+            gSlider.DrawString(valueStr, -1, &labelFont, valueRect, &rightAlign, &valueBrush);
+
+            // Slider track
+            int trackY = sr.top + 38;
+            int trackLeft = sr.left + 14;
+            int trackRight = sr.right - 14;
+            int trackWidth = trackRight - trackLeft;
+            int trackHeight = 4;
+
+            Gdiplus::SolidBrush trackBrush(Gdiplus::Color(255, 35, 35, 40));
+            gSlider.FillRectangle(&trackBrush, trackLeft, trackY, trackWidth, trackHeight);
+
+            // Slider fill
+            float percent = (state->sliderValue - state->sliderMin) / (state->sliderMax - state->sliderMin);
+            percent = (std::max)(0.0f, (std::min)(1.0f, percent));
+            int fillWidth = (int)(trackWidth * percent);
+            Gdiplus::SolidBrush fillBrush(Gdiplus::Color(255, 76, 194, 255));
+            gSlider.FillRectangle(&fillBrush, trackLeft, trackY, fillWidth, trackHeight);
+
+            // Slider thumb (circle)
+            int thumbX = trackLeft + fillWidth;
+            int thumbRadius = 7;
+            Gdiplus::SolidBrush thumbBrush(Gdiplus::Color(255, 255, 255, 255));
+            Gdiplus::Pen thumbPen(Gdiplus::Color(255, 76, 194, 255), 2);
+            gSlider.FillEllipse(&thumbBrush, thumbX - thumbRadius, trackY + trackHeight/2 - thumbRadius, thumbRadius * 2, thumbRadius * 2);
+            gSlider.DrawEllipse(&thumbPen, thumbX - thumbRadius, trackY + trackHeight/2 - thumbRadius, thumbRadius * 2, thumbRadius * 2);
+        }
+
         BitBlt(hdc, 0, 0, width, height, memDC, 0, 0, SRCCOPY);
 
         SelectObject(memDC, oldBitmap);
@@ -898,6 +1001,38 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         if (newHoveredColor != state->hoveredColorIndex) {
             state->hoveredColorIndex = newHoveredColor;
             InvalidateRect(hwnd, &state->toolbarRect, FALSE);
+        }
+
+        // Handle slider dragging
+        if (state->sliderDragging && state->sliderVisible) {
+            RECT& sr = state->sliderRect;
+            int trackLeft = sr.left + 14;
+            int trackRight = sr.right - 14;
+            int trackWidth = trackRight - trackLeft;
+
+            float percent = (float)(x - trackLeft) / (float)trackWidth;
+            percent = (std::max)(0.0f, (std::min)(1.0f, percent));
+            state->sliderValue = state->sliderMin + percent * (state->sliderMax - state->sliderMin);
+
+            // Apply value to appropriate setting
+            switch (state->sliderToolIndex) {
+                case (int)EditorTool::Arrow:
+                case (int)EditorTool::Rectangle:
+                case (int)EditorTool::Ellipse:
+                case (int)EditorTool::Pen:
+                case (int)EditorTool::Highlighter:
+                    state->currentThickness = state->sliderValue;
+                    break;
+                case (int)EditorTool::Blur:
+                    state->currentBlurSize = (int)state->sliderValue;
+                    break;
+                case (int)EditorTool::Text:
+                    state->currentTextSize = state->sliderValue;
+                    break;
+            }
+
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
         }
 
         // Handle drawing
@@ -1013,6 +1148,53 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
         int x = GET_X_LPARAM(lParam);
         int y = GET_Y_LPARAM(lParam);
+        POINT pt = { x, y };
+
+        // Check if clicking on slider popup FIRST (before toolbar/canvas checks)
+        // Slider popup extends below toolbar, so we check it independently
+        if (state->sliderVisible) {
+            if (PtInRect(&state->sliderRect, pt)) {
+                // Start dragging slider
+                RECT& sr = state->sliderRect;
+                int trackLeft = sr.left + 14;
+                int trackRight = sr.right - 14;
+                int trackWidth = trackRight - trackLeft;
+                int trackY = sr.top + 38;
+
+                // Check if clicking near the track area
+                if (y >= trackY - 12 && y <= trackY + 18) {
+                    state->sliderDragging = true;
+                    SetCapture(hwnd);
+
+                    float percent = (float)(x - trackLeft) / (float)trackWidth;
+                    percent = (std::max)(0.0f, (std::min)(1.0f, percent));
+                    state->sliderValue = state->sliderMin + percent * (state->sliderMax - state->sliderMin);
+
+                    // Apply value
+                    switch (state->sliderToolIndex) {
+                        case (int)EditorTool::Arrow:
+                        case (int)EditorTool::Rectangle:
+                        case (int)EditorTool::Ellipse:
+                        case (int)EditorTool::Pen:
+                        case (int)EditorTool::Highlighter:
+                            state->currentThickness = state->sliderValue;
+                            break;
+                        case (int)EditorTool::Blur:
+                            state->currentBlurSize = (int)state->sliderValue;
+                            break;
+                        case (int)EditorTool::Text:
+                            state->currentTextSize = state->sliderValue;
+                            break;
+                    }
+
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                return 0;
+            }
+            // Clicked outside slider - close it
+            state->sliderVisible = false;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
 
         // Tool selection
         if (y < EDITOR_TOOLBAR_HEIGHT) {
@@ -1021,8 +1203,20 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
             for (int i = 0; i <= (int)EditorTool::Crop; i++) {
                 RECT btnRect = { toolX, toolY, toolX + EDITOR_TOOL_SIZE, toolY + EDITOR_TOOL_SIZE };
-                POINT pt = { x, y };
                 if (PtInRect(&btnRect, pt)) {
+                    // Finalize any active text input before switching tools
+                    if (state->textInputActive && !state->textBuffer.empty()) {
+                        auto textObj = std::make_unique<TextObject>();
+                        textObj->position = state->textPosition;
+                        textObj->text = state->textBuffer;
+                        textObj->color = state->currentColor;
+                        textObj->fontSize = state->currentTextSize;
+                        state->undoManager->Execute(std::make_unique<AddObjectCommand>(state, std::move(textObj)));
+                        state->unsavedChanges = true;
+                    }
+                    state->textInputActive = false;
+                    state->textBuffer.clear();
+
                     state->currentTool = (EditorTool)i;
 
                     // Special handling for crop
@@ -1056,43 +1250,28 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                 }
             }
 
-            // Check undo/redo/save buttons
-            // Calculate positions same as DrawEditorToolbar
-            int btnX = 12;
-            for (int i = 0; i <= (int)EditorTool::Crop; i++) {
-                btnX += EDITOR_TOOL_SIZE + 4;
-            }
-            btnX += 8 + 12; // separator
-            btnX = state->colorPickerRect.right + 20;
-
-            int btnY = (EDITOR_TOOLBAR_HEIGHT - EDITOR_TOOL_SIZE) / 2;
+            // Check undo/redo/save buttons using stored positions
 
             // Undo button
-            RECT undoRect = { btnX, btnY, btnX + EDITOR_TOOL_SIZE, btnY + EDITOR_TOOL_SIZE };
-            POINT pt = { x, y };
-            if (PtInRect(&undoRect, pt)) {
+            if (PtInRect(&state->undoRect, pt)) {
                 if (state->undoManager && state->undoManager->CanUndo()) {
                     state->undoManager->Undo();
                     InvalidateRect(hwnd, nullptr, FALSE);
                 }
                 return 0;
             }
-            btnX += EDITOR_TOOL_SIZE + 4;
 
             // Redo button
-            RECT redoRect = { btnX, btnY, btnX + EDITOR_TOOL_SIZE, btnY + EDITOR_TOOL_SIZE };
-            if (PtInRect(&redoRect, pt)) {
+            if (PtInRect(&state->redoRect, pt)) {
                 if (state->undoManager && state->undoManager->CanRedo()) {
                     state->undoManager->Redo();
                     InvalidateRect(hwnd, nullptr, FALSE);
                 }
                 return 0;
             }
-            btnX += EDITOR_TOOL_SIZE + 20;
 
             // Save button
-            RECT saveRect = { btnX, btnY, btnX + 60, btnY + EDITOR_TOOL_SIZE };
-            if (PtInRect(&saveRect, pt)) {
+            if (PtInRect(&state->saveRect, pt)) {
                 if (SaveEditorImage(state, state->filepath.c_str())) {
                     MessageBoxW(hwnd, L"Image saved successfully!", L"Saved", MB_ICONINFORMATION);
                 } else {
@@ -1133,7 +1312,7 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                 textObj->position = state->textPosition;
                 textObj->text = state->textBuffer;
                 textObj->color = state->currentColor;
-                textObj->fontSize = 16;
+                textObj->fontSize = state->currentTextSize;
 
                 state->undoManager->Execute(std::make_unique<AddObjectCommand>(state, std::move(textObj)));
                 state->unsavedChanges = true;
@@ -1203,6 +1382,12 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         if (!state) return 0;
         ReleaseCapture();
 
+        // Stop slider dragging
+        if (state->sliderDragging) {
+            state->sliderDragging = false;
+            return 0;
+        }
+
         if (state->isDrawing && state->activeObject) {
             // Normalize shape bounds
             if (auto* shape = dynamic_cast<ShapeObject*>(state->activeObject.get())) {
@@ -1238,10 +1423,90 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
     case WM_RBUTTONDOWN: {
         if (!state) return 0;
 
-        // Start panning
-        state->isPanning = true;
-        state->panStart = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-        SetCapture(hwnd);
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+
+        // Check if right-clicking on a tool button to show slider
+        if (y < EDITOR_TOOLBAR_HEIGHT) {
+            int toolX = 12;
+            int toolY = (EDITOR_TOOLBAR_HEIGHT - EDITOR_TOOL_SIZE) / 2;
+
+            for (int i = 0; i <= (int)EditorTool::Crop; i++) {
+                RECT btnRect = { toolX, toolY, toolX + EDITOR_TOOL_SIZE, toolY + EDITOR_TOOL_SIZE };
+                POINT pt = { x, y };
+                if (PtInRect(&btnRect, pt)) {
+                    // Check if this tool has adjustable settings
+                    bool hasSettings = false;
+                    float minVal = 1, maxVal = 20, currentVal = 3;
+
+                    switch ((EditorTool)i) {
+                        case EditorTool::Arrow:
+                        case EditorTool::Rectangle:
+                        case EditorTool::Ellipse:
+                        case EditorTool::Pen:
+                        case EditorTool::Highlighter:
+                            hasSettings = true;
+                            minVal = 1; maxVal = 20;
+                            currentVal = state->currentThickness;
+                            break;
+                        case EditorTool::Blur:
+                            hasSettings = true;
+                            minVal = 4; maxVal = 32;
+                            currentVal = (float)state->currentBlurSize;
+                            break;
+                        case EditorTool::Text:
+                            hasSettings = true;
+                            minVal = 8; maxVal = 72;
+                            currentVal = state->currentTextSize;
+                            break;
+                        default:
+                            break;
+                    }
+
+                    if (hasSettings) {
+                        // Toggle slider - close if already showing for this tool
+                        if (state->sliderVisible && state->sliderToolIndex == i) {
+                            state->sliderVisible = false;
+                        } else {
+                            // Show slider popup below the button
+                            state->sliderVisible = true;
+                            state->sliderToolIndex = i;
+                            state->sliderMin = minVal;
+                            state->sliderMax = maxVal;
+                            state->sliderValue = currentVal;
+                            state->sliderRect = {
+                                toolX - 20,
+                                toolY + EDITOR_TOOL_SIZE + 5,
+                                toolX + 160,
+                                toolY + EDITOR_TOOL_SIZE + 60
+                            };
+                        }
+
+                        // Also select this tool
+                        state->currentTool = (EditorTool)i;
+                        if (state->currentTool == EditorTool::Crop && state->displayImage) {
+                            state->cropActive = true;
+                            state->cropRect = { 0, 0,
+                                (LONG)state->displayImage->GetWidth(),
+                                (LONG)state->displayImage->GetHeight() };
+                        } else {
+                            state->cropActive = false;
+                        }
+
+                        InvalidateRect(hwnd, nullptr, FALSE);
+                        return 0;
+                    }
+                }
+                toolX += EDITOR_TOOL_SIZE + 4;
+            }
+        }
+
+        // Start panning (if not on toolbar)
+        if (y >= EDITOR_TOOLBAR_HEIGHT) {
+            state->isPanning = true;
+            state->panStart = { x, y };
+            SetCapture(hwnd);
+        }
         return 0;
     }
 
@@ -1278,7 +1543,7 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                 textObj->position = state->textPosition;
                 textObj->text = state->textBuffer;
                 textObj->color = state->currentColor;
-                textObj->fontSize = 16;
+                textObj->fontSize = state->currentTextSize;
 
                 state->undoManager->Execute(std::make_unique<AddObjectCommand>(state, std::move(textObj)));
                 state->unsavedChanges = true;
@@ -1347,8 +1612,8 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             return 0;
         }
 
-        // Number keys for tools
-        if (wParam >= '1' && wParam <= '9') {
+        // Number keys for tools (only when not typing text)
+        if (!state->textInputActive && wParam >= '1' && wParam <= '9') {
             int toolIndex = wParam - '1';
             if (toolIndex <= (int)EditorTool::Crop) {
                 state->currentTool = (EditorTool)toolIndex;
