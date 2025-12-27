@@ -24,6 +24,9 @@ struct EditorObject {
     virtual void Draw(Gdiplus::Graphics& g, float zoom, POINT offset) = 0;
     virtual RECT GetBounds() const = 0;
     virtual EditorObject* Clone() const = 0;
+    virtual bool HitTest(POINT pt) const;  // Returns true if point is on object
+    virtual void Move(int dx, int dy) = 0;  // Move object by delta
+    virtual void SetBounds(const RECT& newBounds) = 0;  // Resize to new bounds
 };
 
 // Arrow annotation
@@ -37,6 +40,9 @@ struct ArrowObject : EditorObject {
     void Draw(Gdiplus::Graphics& g, float zoom, POINT offset) override;
     RECT GetBounds() const override;
     EditorObject* Clone() const override { return new ArrowObject(*this); }
+    bool HitTest(POINT pt) const override;
+    void Move(int dx, int dy) override;
+    void SetBounds(const RECT& newBounds) override;
 };
 
 // Shape annotation (rectangle or ellipse)
@@ -51,6 +57,9 @@ struct ShapeObject : EditorObject {
     void Draw(Gdiplus::Graphics& g, float zoom, POINT offset) override;
     RECT GetBounds() const override { return bounds; }
     EditorObject* Clone() const override { return new ShapeObject(*this); }
+    bool HitTest(POINT pt) const override;
+    void Move(int dx, int dy) override;
+    void SetBounds(const RECT& newBounds) override;
 };
 
 // Freehand path (pen/highlighter)
@@ -63,6 +72,9 @@ struct PathObject : EditorObject {
     void Draw(Gdiplus::Graphics& g, float zoom, POINT offset) override;
     RECT GetBounds() const override;
     EditorObject* Clone() const override { return new PathObject(*this); }
+    bool HitTest(POINT pt) const override;
+    void Move(int dx, int dy) override;
+    void SetBounds(const RECT& newBounds) override;
 };
 
 // Text annotation
@@ -77,6 +89,9 @@ struct TextObject : EditorObject {
     void Draw(Gdiplus::Graphics& g, float zoom, POINT offset) override;
     RECT GetBounds() const override;
     EditorObject* Clone() const override { return new TextObject(*this); }
+    bool HitTest(POINT pt) const override;
+    void Move(int dx, int dy) override;
+    void SetBounds(const RECT& newBounds) override;
 };
 
 // Blur region
@@ -87,6 +102,9 @@ struct BlurRegion : EditorObject {
     void Draw(Gdiplus::Graphics& g, float zoom, POINT offset) override;
     RECT GetBounds() const override { return bounds; }
     EditorObject* Clone() const override { return new BlurRegion(*this); }
+    bool HitTest(POINT pt) const override;
+    void Move(int dx, int dy) override;
+    void SetBounds(const RECT& newBounds) override;
 };
 
 // Forward declaration
@@ -133,6 +151,9 @@ struct EditorState {
 
     // Selection
     int selectedObject = -1;
+    int selectionHandle = -1;  // -1=none, -2=move, 0-7=resize handles
+    POINT selectionStart = {};  // For tracking drag start
+    RECT originalBounds = {};   // Original bounds before resize/move
 
     // UI state
     int hoveredTool = -1;
@@ -204,6 +225,11 @@ bool SaveEditorImage(EditorState* state, const wchar_t* filepath);
 void ApplyBlurToRegion(Gdiplus::Bitmap* bitmap, const RECT& region, int blockSize);
 POINT ScreenToCanvas(EditorState* state, POINT screenPt);
 POINT CanvasToScreen(EditorState* state, POINT canvasPt);
+
+// Selection helpers
+int GetSelectionHandleAtPoint(EditorState* state, POINT canvasPt);
+void DrawSelectionHandles(Gdiplus::Graphics& g, const RECT& bounds, float zoom, POINT offset);
+HCURSOR GetSelectionCursor(int handle);
 
 // Open image in editor (called from gallery)
 void OpenImageInEditor(const std::wstring& filepath);

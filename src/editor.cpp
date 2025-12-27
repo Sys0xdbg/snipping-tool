@@ -468,6 +468,275 @@ void BlurRegion::Draw(Gdiplus::Graphics& g, float zoom, POINT offset) {
     g.DrawRectangle(&pen, x, y, w, h);
 }
 
+// Default hit test implementation using bounding box
+bool EditorObject::HitTest(POINT pt) const {
+    RECT bounds = GetBounds();
+    return pt.x >= bounds.left && pt.x <= bounds.right &&
+           pt.y >= bounds.top && pt.y <= bounds.bottom;
+}
+
+// Arrow hit test - check distance to line segment
+bool ArrowObject::HitTest(POINT pt) const {
+    float tolerance = thickness + 5;
+
+    // Calculate distance from point to line segment
+    float dx = (float)(end.x - start.x);
+    float dy = (float)(end.y - start.y);
+    float len2 = dx * dx + dy * dy;
+
+    if (len2 == 0) {
+        // Start and end are same point
+        float dist = sqrtf((float)((pt.x - start.x) * (pt.x - start.x) + (pt.y - start.y) * (pt.y - start.y)));
+        return dist <= tolerance;
+    }
+
+    float t = (std::max)(0.0f, (std::min)(1.0f, ((pt.x - start.x) * dx + (pt.y - start.y) * dy) / len2));
+    float projX = start.x + t * dx;
+    float projY = start.y + t * dy;
+    float dist = sqrtf((pt.x - projX) * (pt.x - projX) + (pt.y - projY) * (pt.y - projY));
+
+    return dist <= tolerance;
+}
+
+void ArrowObject::Move(int dx, int dy) {
+    start.x += dx;
+    start.y += dy;
+    end.x += dx;
+    end.y += dy;
+}
+
+void ArrowObject::SetBounds(const RECT& newBounds) {
+    RECT oldBounds = GetBounds();
+    float scaleX = (float)(newBounds.right - newBounds.left) / (float)(oldBounds.right - oldBounds.left);
+    float scaleY = (float)(newBounds.bottom - newBounds.top) / (float)(oldBounds.bottom - oldBounds.top);
+
+    start.x = newBounds.left + (LONG)((start.x - oldBounds.left) * scaleX);
+    start.y = newBounds.top + (LONG)((start.y - oldBounds.top) * scaleY);
+    end.x = newBounds.left + (LONG)((end.x - oldBounds.left) * scaleX);
+    end.y = newBounds.top + (LONG)((end.y - oldBounds.top) * scaleY);
+}
+
+// Shape hit test
+bool ShapeObject::HitTest(POINT pt) const {
+    float tolerance = thickness + 3;
+
+    if (isEllipse) {
+        // Check if point is near ellipse border
+        float cx = (bounds.left + bounds.right) / 2.0f;
+        float cy = (bounds.top + bounds.bottom) / 2.0f;
+        float rx = (bounds.right - bounds.left) / 2.0f;
+        float ry = (bounds.bottom - bounds.top) / 2.0f;
+
+        if (rx == 0 || ry == 0) return false;
+
+        float dx = (pt.x - cx) / rx;
+        float dy = (pt.y - cy) / ry;
+        float dist = sqrtf(dx * dx + dy * dy);
+
+        // Near border or inside if filled
+        return (dist >= 1.0f - tolerance / rx && dist <= 1.0f + tolerance / rx) ||
+               (filled && dist <= 1.0f);
+    } else {
+        // Rectangle - check if near border or inside if filled
+        bool nearLeft = abs(pt.x - bounds.left) <= tolerance && pt.y >= bounds.top && pt.y <= bounds.bottom;
+        bool nearRight = abs(pt.x - bounds.right) <= tolerance && pt.y >= bounds.top && pt.y <= bounds.bottom;
+        bool nearTop = abs(pt.y - bounds.top) <= tolerance && pt.x >= bounds.left && pt.x <= bounds.right;
+        bool nearBottom = abs(pt.y - bounds.bottom) <= tolerance && pt.x >= bounds.left && pt.x <= bounds.right;
+
+        bool inside = pt.x >= bounds.left && pt.x <= bounds.right &&
+                      pt.y >= bounds.top && pt.y <= bounds.bottom;
+
+        return nearLeft || nearRight || nearTop || nearBottom || (filled && inside);
+    }
+}
+
+void ShapeObject::Move(int dx, int dy) {
+    bounds.left += dx;
+    bounds.right += dx;
+    bounds.top += dy;
+    bounds.bottom += dy;
+}
+
+void ShapeObject::SetBounds(const RECT& newBounds) {
+    bounds = newBounds;
+}
+
+// Path hit test - check distance to any line segment
+bool PathObject::HitTest(POINT pt) const {
+    float tolerance = thickness + 5;
+    if (isHighlighter) tolerance = thickness * 1.5f + 5;
+
+    for (size_t i = 1; i < points.size(); i++) {
+        POINT p1 = points[i - 1];
+        POINT p2 = points[i];
+
+        float dx = (float)(p2.x - p1.x);
+        float dy = (float)(p2.y - p1.y);
+        float len2 = dx * dx + dy * dy;
+
+        if (len2 == 0) continue;
+
+        float t = (std::max)(0.0f, (std::min)(1.0f, ((pt.x - p1.x) * dx + (pt.y - p1.y) * dy) / len2));
+        float projX = p1.x + t * dx;
+        float projY = p1.y + t * dy;
+        float dist = sqrtf((pt.x - projX) * (pt.x - projX) + (pt.y - projY) * (pt.y - projY));
+
+        if (dist <= tolerance) return true;
+    }
+    return false;
+}
+
+void PathObject::Move(int dx, int dy) {
+    for (auto& pt : points) {
+        pt.x += dx;
+        pt.y += dy;
+    }
+}
+
+void PathObject::SetBounds(const RECT& newBounds) {
+    RECT oldBounds = GetBounds();
+    if (oldBounds.right == oldBounds.left || oldBounds.bottom == oldBounds.top) return;
+
+    float scaleX = (float)(newBounds.right - newBounds.left) / (float)(oldBounds.right - oldBounds.left);
+    float scaleY = (float)(newBounds.bottom - newBounds.top) / (float)(oldBounds.bottom - oldBounds.top);
+
+    for (auto& pt : points) {
+        pt.x = newBounds.left + (LONG)((pt.x - oldBounds.left) * scaleX);
+        pt.y = newBounds.top + (LONG)((pt.y - oldBounds.top) * scaleY);
+    }
+}
+
+// Text hit test
+bool TextObject::HitTest(POINT pt) const {
+    RECT bounds = GetBounds();
+    return pt.x >= bounds.left && pt.x <= bounds.right &&
+           pt.y >= bounds.top && pt.y <= bounds.bottom;
+}
+
+void TextObject::Move(int dx, int dy) {
+    position.x += dx;
+    position.y += dy;
+}
+
+void TextObject::SetBounds(const RECT& newBounds) {
+    // For text, we just move to top-left corner and optionally scale font
+    position.x = newBounds.left;
+    position.y = newBounds.top;
+
+    // Optionally scale font based on height change
+    RECT oldBounds = GetBounds();
+    if (oldBounds.bottom != oldBounds.top) {
+        float scale = (float)(newBounds.bottom - newBounds.top) / (float)(oldBounds.bottom - oldBounds.top);
+        fontSize = fontSize * scale;
+        if (fontSize < 8) fontSize = 8;
+        if (fontSize > 200) fontSize = 200;
+    }
+}
+
+// Blur region hit test
+bool BlurRegion::HitTest(POINT pt) const {
+    return pt.x >= bounds.left && pt.x <= bounds.right &&
+           pt.y >= bounds.top && pt.y <= bounds.bottom;
+}
+
+void BlurRegion::Move(int dx, int dy) {
+    bounds.left += dx;
+    bounds.right += dx;
+    bounds.top += dy;
+    bounds.bottom += dy;
+}
+
+void BlurRegion::SetBounds(const RECT& newBounds) {
+    bounds = newBounds;
+}
+
+// Selection helpers
+int GetSelectionHandleAtPoint(EditorState* state, POINT canvasPt) {
+    if (state->selectedObject < 0 || state->selectedObject >= (int)state->objects.size())
+        return -1;
+
+    RECT bounds = state->objects[state->selectedObject]->GetBounds();
+    const int handleSize = 8;
+
+    // Handle positions: 0=TL, 1=T, 2=TR, 3=R, 4=BR, 5=B, 6=BL, 7=L
+    POINT handles[8] = {
+        { bounds.left, bounds.top },                                    // 0: Top-left
+        { (bounds.left + bounds.right) / 2, bounds.top },               // 1: Top
+        { bounds.right, bounds.top },                                   // 2: Top-right
+        { bounds.right, (bounds.top + bounds.bottom) / 2 },             // 3: Right
+        { bounds.right, bounds.bottom },                                // 4: Bottom-right
+        { (bounds.left + bounds.right) / 2, bounds.bottom },            // 5: Bottom
+        { bounds.left, bounds.bottom },                                 // 6: Bottom-left
+        { bounds.left, (bounds.top + bounds.bottom) / 2 },              // 7: Left
+    };
+
+    for (int i = 0; i < 8; i++) {
+        RECT handleRect = {
+            handles[i].x - handleSize / 2, handles[i].y - handleSize / 2,
+            handles[i].x + handleSize / 2, handles[i].y + handleSize / 2
+        };
+        if (canvasPt.x >= handleRect.left && canvasPt.x <= handleRect.right &&
+            canvasPt.y >= handleRect.top && canvasPt.y <= handleRect.bottom) {
+            return i;
+        }
+    }
+
+    // Check if inside bounds (for move)
+    if (canvasPt.x >= bounds.left && canvasPt.x <= bounds.right &&
+        canvasPt.y >= bounds.top && canvasPt.y <= bounds.bottom) {
+        return -2;  // Inside = move
+    }
+
+    return -1;  // Not on selection
+}
+
+void DrawSelectionHandles(Gdiplus::Graphics& g, const RECT& bounds, float zoom, POINT offset) {
+    const int handleSize = 8;
+
+    // Draw selection rectangle
+    float x = bounds.left * zoom + offset.x;
+    float y = bounds.top * zoom + offset.y;
+    float w = (bounds.right - bounds.left) * zoom;
+    float h = (bounds.bottom - bounds.top) * zoom;
+
+    Gdiplus::Pen borderPen(Gdiplus::Color(200, 0, 120, 255), 1.5f);
+    borderPen.SetDashStyle(Gdiplus::DashStyleDash);
+    g.DrawRectangle(&borderPen, x, y, w, h);
+
+    // Handle positions in canvas coords, then transform
+    POINT handles[8] = {
+        { bounds.left, bounds.top },
+        { (bounds.left + bounds.right) / 2, bounds.top },
+        { bounds.right, bounds.top },
+        { bounds.right, (bounds.top + bounds.bottom) / 2 },
+        { bounds.right, bounds.bottom },
+        { (bounds.left + bounds.right) / 2, bounds.bottom },
+        { bounds.left, bounds.bottom },
+        { bounds.left, (bounds.top + bounds.bottom) / 2 },
+    };
+
+    Gdiplus::SolidBrush fillBrush(Gdiplus::Color(255, 255, 255, 255));
+    Gdiplus::Pen handlePen(Gdiplus::Color(255, 0, 120, 255), 1.5f);
+
+    for (int i = 0; i < 8; i++) {
+        float hx = handles[i].x * zoom + offset.x - handleSize / 2;
+        float hy = handles[i].y * zoom + offset.y - handleSize / 2;
+        g.FillRectangle(&fillBrush, hx, hy, (float)handleSize, (float)handleSize);
+        g.DrawRectangle(&handlePen, hx, hy, (float)handleSize, (float)handleSize);
+    }
+}
+
+HCURSOR GetSelectionCursor(int handle) {
+    switch (handle) {
+        case -2: return LoadCursor(nullptr, IDC_SIZEALL);  // Move
+        case 0: case 4: return LoadCursor(nullptr, IDC_SIZENWSE);  // TL, BR
+        case 2: case 6: return LoadCursor(nullptr, IDC_SIZENESW);  // TR, BL
+        case 1: case 5: return LoadCursor(nullptr, IDC_SIZENS);    // T, B
+        case 3: case 7: return LoadCursor(nullptr, IDC_SIZEWE);    // R, L
+        default: return LoadCursor(nullptr, IDC_ARROW);
+    }
+}
+
 void DrawEditorToolbar(HDC hdc, EditorState* state) {
     RECT& toolbar = state->toolbarRect;
 
@@ -674,6 +943,12 @@ void DrawEditorCanvas(HDC hdc, EditorState* state) {
         Gdiplus::SolidBrush hintBrush(Gdiplus::Color(255, 255, 255, 255));
         g.DrawString(L"Press Enter to apply crop, Esc to cancel", -1, &hintFont,
             Gdiplus::PointF((float)(cx + 5), (float)(cy + ch + 5)), &hintBrush);
+    }
+
+    // Draw selection handles for selected object
+    if (state->selectedObject >= 0 && state->selectedObject < (int)state->objects.size()) {
+        RECT bounds = state->objects[state->selectedObject]->GetBounds();
+        DrawSelectionHandles(g, bounds, state->zoom, drawOffset);
     }
 
     // Draw text input cursor
@@ -1035,6 +1310,86 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             return 0;
         }
 
+        // Handle selection move/resize
+        if (state->isDrawing && state->currentTool == EditorTool::Select &&
+            state->selectedObject >= 0 && state->selectionHandle >= -2) {
+            POINT canvasPt = ScreenToCanvas(state, { x, y });
+            int dx = canvasPt.x - state->selectionStart.x;
+            int dy = canvasPt.y - state->selectionStart.y;
+
+            EditorObject* obj = state->objects[state->selectedObject].get();
+            RECT newBounds = state->originalBounds;
+
+            if (state->selectionHandle == -2) {
+                // Move - use Move() method for accurate translation
+                obj->Move(dx, dy);
+                state->selectionStart = canvasPt;  // Update start for next delta
+            } else {
+                // Resize based on handle
+                switch (state->selectionHandle) {
+                    case 0:  // TL
+                        newBounds.left += dx;
+                        newBounds.top += dy;
+                        break;
+                    case 1:  // T
+                        newBounds.top += dy;
+                        break;
+                    case 2:  // TR
+                        newBounds.right += dx;
+                        newBounds.top += dy;
+                        break;
+                    case 3:  // R
+                        newBounds.right += dx;
+                        break;
+                    case 4:  // BR
+                        newBounds.right += dx;
+                        newBounds.bottom += dy;
+                        break;
+                    case 5:  // B
+                        newBounds.bottom += dy;
+                        break;
+                    case 6:  // BL
+                        newBounds.left += dx;
+                        newBounds.bottom += dy;
+                        break;
+                    case 7:  // L
+                        newBounds.left += dx;
+                        break;
+                }
+
+                // Ensure minimum size
+                if (newBounds.right - newBounds.left < 5) {
+                    if (state->selectionHandle == 0 || state->selectionHandle == 6 || state->selectionHandle == 7)
+                        newBounds.left = newBounds.right - 5;
+                    else
+                        newBounds.right = newBounds.left + 5;
+                }
+                if (newBounds.bottom - newBounds.top < 5) {
+                    if (state->selectionHandle == 0 || state->selectionHandle == 1 || state->selectionHandle == 2)
+                        newBounds.top = newBounds.bottom - 5;
+                    else
+                        newBounds.bottom = newBounds.top + 5;
+                }
+
+                obj->SetBounds(newBounds);
+            }
+
+            InvalidateRect(hwnd, &state->canvasRect, FALSE);
+            return 0;
+        }
+
+        // Update cursor for selection handles
+        if (state->currentTool == EditorTool::Select && state->selectedObject >= 0 &&
+            !state->isDrawing && y > EDITOR_TOOLBAR_HEIGHT) {
+            POINT canvasPt = ScreenToCanvas(state, { x, y });
+            int handle = GetSelectionHandleAtPoint(state, canvasPt);
+            if (handle >= -2) {
+                SetCursor(GetSelectionCursor(handle));
+            } else {
+                SetCursor(LoadCursor(nullptr, IDC_ARROW));
+            }
+        }
+
         // Handle drawing
         if (state->isDrawing && y > EDITOR_TOOLBAR_HEIGHT) {
             POINT canvasPt = ScreenToCanvas(state, { x, y });
@@ -1298,8 +1653,53 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         }
 
         // Canvas interaction
-        SetCapture(hwnd);
         POINT canvasPt = ScreenToCanvas(state, { x, y });
+
+        // Handle Select tool
+        if (state->currentTool == EditorTool::Select) {
+            // First check if clicking on a handle of selected object
+            if (state->selectedObject >= 0) {
+                int handle = GetSelectionHandleAtPoint(state, canvasPt);
+                if (handle >= -2) {  // -2=move, 0-7=resize
+                    SetCapture(hwnd);
+                    state->selectionHandle = handle;
+                    state->selectionStart = canvasPt;
+                    state->originalBounds = state->objects[state->selectedObject]->GetBounds();
+                    state->isDrawing = true;
+                    SetCursor(GetSelectionCursor(handle));
+                    return 0;
+                }
+            }
+
+            // Check if clicking on any object (iterate backwards to get topmost first)
+            int clickedObj = -1;
+            for (int i = (int)state->objects.size() - 1; i >= 0; i--) {
+                if (state->objects[i]->HitTest(canvasPt)) {
+                    clickedObj = i;
+                    break;
+                }
+            }
+
+            if (clickedObj >= 0) {
+                state->selectedObject = clickedObj;
+                // Start move immediately
+                SetCapture(hwnd);
+                state->selectionHandle = -2;  // Move
+                state->selectionStart = canvasPt;
+                state->originalBounds = state->objects[clickedObj]->GetBounds();
+                state->isDrawing = true;
+            } else {
+                // Clicked on empty space - deselect
+                state->selectedObject = -1;
+            }
+            InvalidateRect(hwnd, &state->canvasRect, FALSE);
+            return 0;
+        }
+
+        // Clear selection when using other tools
+        state->selectedObject = -1;
+
+        SetCapture(hwnd);
         state->drawStart = canvasPt;
         state->drawEnd = canvasPt;
         state->isDrawing = true;
@@ -1385,6 +1785,16 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
         // Stop slider dragging
         if (state->sliderDragging) {
             state->sliderDragging = false;
+            return 0;
+        }
+
+        // Finish selection move/resize
+        if (state->isDrawing && state->currentTool == EditorTool::Select &&
+            state->selectionHandle >= -2) {
+            state->selectionHandle = -1;
+            state->isDrawing = false;
+            state->unsavedChanges = true;
+            InvalidateRect(hwnd, &state->canvasRect, FALSE);
             return 0;
         }
 
@@ -1609,6 +2019,23 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             state->cropActive = false;
             state->unsavedChanges = true;
             InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+
+        // Delete - Remove selected object
+        if (wParam == VK_DELETE && state->selectedObject >= 0 &&
+            state->selectedObject < (int)state->objects.size()) {
+            state->objects.erase(state->objects.begin() + state->selectedObject);
+            state->selectedObject = -1;
+            state->unsavedChanges = true;
+            InvalidateRect(hwnd, &state->canvasRect, FALSE);
+            return 0;
+        }
+
+        // Escape - Deselect
+        if (wParam == VK_ESCAPE && state->selectedObject >= 0) {
+            state->selectedObject = -1;
+            InvalidateRect(hwnd, &state->canvasRect, FALSE);
             return 0;
         }
 
