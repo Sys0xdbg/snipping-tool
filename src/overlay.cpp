@@ -58,6 +58,8 @@ HWND FindWindowAtPoint(POINT pt) {
 }
 
 void ShowOverlay() {
+    // Remember if main window was visible before capture
+    g_app.mainWasVisible = IsWindowVisible(g_app.mainWnd);
     ShowWindow(g_app.mainWnd, SW_HIDE);
 
     if (g_app.delaySeconds > 0) {
@@ -68,7 +70,9 @@ void ShowOverlay() {
 
     if (!CaptureScreen()) {
         MessageBoxW(g_app.mainWnd, L"Failed to capture screen", L"Error", MB_ICONERROR);
-        ShowWindow(g_app.mainWnd, SW_SHOW);
+        if (g_app.mainWasVisible) {
+            ShowWindow(g_app.mainWnd, SW_SHOW);
+        }
         return;
     }
 
@@ -93,7 +97,11 @@ void ShowOverlay() {
 void HideOverlay() {
     ReleaseCapture();
     ShowWindow(g_app.overlayWnd, SW_HIDE);
-    ShowWindow(g_app.mainWnd, SW_SHOW);
+
+    // Only show main window if it was visible before capture
+    if (g_app.mainWasVisible) {
+        ShowWindow(g_app.mainWnd, SW_SHOW);
+    }
 
     g_app.hoveredWindow = nullptr;
     SetRectEmpty(&g_app.hoveredWindowRect);
@@ -340,6 +348,8 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
 }
 
 void CaptureFullscreen() {
+    // Remember if main window was visible before capture
+    g_app.mainWasVisible = IsWindowVisible(g_app.mainWnd);
     ShowWindow(g_app.mainWnd, SW_HIDE);
 
     if (g_app.delaySeconds > 0) {
@@ -350,11 +360,15 @@ void CaptureFullscreen() {
 
     if (!CaptureScreen()) {
         MessageBoxW(g_app.mainWnd, L"Failed to capture screen", L"Error", MB_ICONERROR);
-        ShowWindow(g_app.mainWnd, SW_SHOW);
+        if (g_app.mainWasVisible) {
+            ShowWindow(g_app.mainWnd, SW_SHOW);
+        }
         return;
     }
 
-    ShowWindow(g_app.mainWnd, SW_SHOW);
+    if (g_app.mainWasVisible) {
+        ShowWindow(g_app.mainWnd, SW_SHOW);
+    }
 
     RECT fullscreen = { 0, 0, (LONG)g_app.screenWidth, (LONG)g_app.screenHeight };
 

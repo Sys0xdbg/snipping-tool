@@ -194,11 +194,15 @@ void ShowModePicker() {
         return;
     }
 
+    // Remember if main window was visible before capture
+    g_app.mainWasVisible = IsWindowVisible(g_app.mainWnd);
     ShowWindow(g_app.mainWnd, SW_HIDE);
     Sleep(150);
 
     if (!CaptureScreen()) {
-        ShowWindow(g_app.mainWnd, SW_SHOW);
+        if (g_app.mainWasVisible) {
+            ShowWindow(g_app.mainWnd, SW_SHOW);
+        }
         return;
     }
 
@@ -265,6 +269,8 @@ void HideModePicker() {
 
     if (wasPrintScreenMode) {
         ShowWindow(g_app.overlayWnd, SW_HIDE);
-        ShowWindow(g_app.mainWnd, SW_SHOW);
+        if (g_app.mainWasVisible) {
+            ShowWindow(g_app.mainWnd, SW_SHOW);
+        }
     }
 }

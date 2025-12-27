@@ -110,7 +110,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                         }
                     }
                 }
-                ShowWindow(g_app.mainWnd, SW_SHOW);
+                if (g_app.mainWasVisible) {
+                    ShowWindow(g_app.mainWnd, SW_SHOW);
+                }
             } else {
                 SetForegroundWindow(g_app.overlayWnd);
                 SetCapture(g_app.overlayWnd);

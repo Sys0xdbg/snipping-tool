@@ -69,6 +69,9 @@ struct AppState {
     // System tray
     NOTIFYICONDATAW trayIcon = {};
     bool trayIconAdded = false;
+
+    // Track if main window was visible before capture
+    bool mainWasVisible = false;
 };
 
 extern AppState g_app;
