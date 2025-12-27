@@ -710,7 +710,12 @@ void ShowSettingsDialog(HWND parent) {
         parent, nullptr, g_app.hInstance, nullptr
     );
 
-    EnableDarkMode(g_settings.hwnd);
+    // Enable dark mode and rounded corners (but not caption color to allow blur)
+    BOOL darkMode = TRUE;
+    DwmSetWindowAttribute(g_settings.hwnd, 20, &darkMode, sizeof(darkMode));  // DWMWA_USE_IMMERSIVE_DARK_MODE
+
+    DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+    DwmSetWindowAttribute(g_settings.hwnd, 33, &corner, sizeof(corner));  // DWMWA_WINDOW_CORNER_PREFERENCE
 
     // Enable Mica blur effect (Windows 11 22H2+)
     enum { DWMWA_SYSTEMBACKDROP_TYPE = 38 };
