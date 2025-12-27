@@ -12,6 +12,27 @@
 
 #pragma comment(lib, "windowsapp.lib")
 
+// Scale up image for better OCR recognition
+static std::vector<uint8_t> ScaleUpImage(const std::vector<uint8_t>& src, int srcW, int srcH, int scale, int& outW, int& outH) {
+    outW = srcW * scale;
+    outH = srcH * scale;
+    std::vector<uint8_t> dst(outW * outH * 4);
+
+    for (int y = 0; y < outH; y++) {
+        for (int x = 0; x < outW; x++) {
+            int srcX = x / scale;
+            int srcY = y / scale;
+            int srcIdx = (srcY * srcW + srcX) * 4;
+            int dstIdx = (y * outW + x) * 4;
+            dst[dstIdx + 0] = src[srcIdx + 0];
+            dst[dstIdx + 1] = src[srcIdx + 1];
+            dst[dstIdx + 2] = src[srcIdx + 2];
+            dst[dstIdx + 3] = 255; // Full opacity for better OCR
+        }
+    }
+    return dst;
+}
+
 bool PerformOCR(const RECT& region) {
     if (!g_app.capturedTexture) {
         ShowTextNotification(L"OCR Failed", L"No captured image available", true);
@@ -55,6 +76,23 @@ bool PerformOCR(const RECT& region) {
 
     g_app.context->Unmap(g_app.capturedTexture.Get(), 0);
 
+    // Scale up small images for better OCR accuracy
+    int finalWidth = width;
+    int finalHeight = height;
+    std::vector<uint8_t> finalPixels;
+
+    if (width < 200 || height < 50) {
+        int scale = 2;
+        if (width < 100 || height < 25) scale = 3;
+        finalPixels = ScaleUpImage(pixelData, width, height, scale, finalWidth, finalHeight);
+    } else {
+        finalPixels = std::move(pixelData);
+        // Set alpha to 255 for better recognition
+        for (size_t i = 3; i < finalPixels.size(); i += 4) {
+            finalPixels[i] = 255;
+        }
+    }
+
     // Now perform OCR with copied data
     try {
         // Initialize WinRT apartment (may already be initialized)
@@ -66,14 +104,14 @@ bool PerformOCR(const RECT& region) {
 
         // Create IBuffer from pixel data
         auto buffer = winrt::Windows::Security::Cryptography::CryptographicBuffer::CreateFromByteArray(
-            winrt::array_view<uint8_t const>(pixelData.data(), pixelData.data() + pixelData.size()));
+            winrt::array_view<uint8_t const>(finalPixels.data(), finalPixels.data() + finalPixels.size()));
 
-        // Create SoftwareBitmap from buffer
+        // Create SoftwareBitmap from buffer - use Ignore alpha for better text recognition
         auto bitmap = winrt::Windows::Graphics::Imaging::SoftwareBitmap::CreateCopyFromBuffer(
             buffer,
             winrt::Windows::Graphics::Imaging::BitmapPixelFormat::Bgra8,
-            width, height,
-            winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Premultiplied);
+            finalWidth, finalHeight,
+            winrt::Windows::Graphics::Imaging::BitmapAlphaMode::Ignore);
 
         // Create OCR engine
         winrt::Windows::Media::Ocr::OcrEngine ocrEngine{ nullptr };
@@ -94,11 +132,13 @@ bool PerformOCR(const RECT& region) {
         auto result = ocrEngine.RecognizeAsync(bitmap).get();
 
         std::wstring extractedText;
+        int lineCount = 0;
         for (auto const& line : result.Lines()) {
             if (!extractedText.empty()) {
                 extractedText += L"\r\n";
             }
             extractedText += line.Text().c_str();
+            lineCount++;
         }
 
         if (extractedText.empty()) {
@@ -121,7 +161,15 @@ bool PerformOCR(const RECT& region) {
                 }
             }
             CloseClipboard();
-            ShowTextNotification(L"Text Copied", L"Text has been copied to clipboard", false);
+
+            // Show notification with line count
+            wchar_t msg[64];
+            if (lineCount == 1) {
+                swprintf_s(msg, L"Copied 1 line to clipboard");
+            } else {
+                swprintf_s(msg, L"Copied %d lines to clipboard", lineCount);
+            }
+            ShowTextNotification(L"Text Copied", msg, false);
         }
 
         return true;
