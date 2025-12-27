@@ -277,8 +277,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
     }
 
-    case WM_ERASEBKGND:
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wParam;
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        HBRUSH brush = CreateSolidBrush(RGB(0, 0, 0));
+        FillRect(hdc, &rc, brush);
+        DeleteObject(brush);
         return 1;
+    }
 
     case WM_CLOSE:
         // Minimize to tray instead of closing

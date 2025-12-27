@@ -103,7 +103,20 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
         nullptr, nullptr, hInstance, nullptr
     );
 
-    EnableDarkMode(g_app.mainWnd);
+    // Enable dark mode and rounded corners (but not caption color to allow blur)
+    BOOL darkMode = TRUE;
+    DwmSetWindowAttribute(g_app.mainWnd, 20, &darkMode, sizeof(darkMode));  // DWMWA_USE_IMMERSIVE_DARK_MODE
+
+    DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+    DwmSetWindowAttribute(g_app.mainWnd, 33, &corner, sizeof(corner));  // DWMWA_WINDOW_CORNER_PREFERENCE
+
+    // Enable Mica blur effect (Windows 11 22H2+)
+    int backdropType = 2;  // DWMSBT_MAINWINDOW (Mica)
+    DwmSetWindowAttribute(g_app.mainWnd, 38, &backdropType, sizeof(backdropType));  // DWMWA_SYSTEMBACKDROP_TYPE
+
+    // Extend frame into client area for blur
+    MARGINS margins = { -1, -1, -1, -1 };
+    DwmExtendFrameIntoClientArea(g_app.mainWnd, &margins);
 
     // Register hotkeys now that g_app.mainWnd is set
     RegisterHotkeys();
