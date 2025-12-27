@@ -237,13 +237,16 @@ void ShowModePicker() {
 }
 
 void HideModePicker() {
+    // Set this first to prevent WM_KILLFOCUS from triggering capture
+    bool wasPrintScreenMode = g_printScreenMode;
+    g_printScreenMode = false;
+
     if (g_app.modePickerWnd) {
         DestroyWindow(g_app.modePickerWnd);
         g_app.modePickerWnd = nullptr;
     }
 
-    if (g_printScreenMode) {
-        g_printScreenMode = false;
+    if (wasPrintScreenMode) {
         ShowWindow(g_app.overlayWnd, SW_HIDE);
         ShowWindow(g_app.mainWnd, SW_SHOW);
     }

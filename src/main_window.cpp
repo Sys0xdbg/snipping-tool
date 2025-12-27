@@ -16,6 +16,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         return 0;
 
     case WM_HOTKEY:
+        // Ignore hotkeys if overlay is already visible
+        if (IsWindowVisible(g_app.overlayWnd)) {
+            return 0;
+        }
         switch (wParam) {
         case HOTKEY_RECTANGLE:
             g_app.captureMode = MODE_RECTANGLE;

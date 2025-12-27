@@ -61,7 +61,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     wcMain.hCursor = LoadCursor(nullptr, IDC_ARROW);
     wcMain.hbrBackground = nullptr;
     wcMain.lpszClassName = L"SnippingToolMain";
-    wcMain.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
+    wcMain.hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(101));
     RegisterClassExW(&wcMain);
 
     // Register overlay window class

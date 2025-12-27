@@ -16,6 +16,10 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
 
                 // Win+Shift+S without Ctrl or Alt
                 if (winPressed && shiftPressed && !ctrlPressed && !altPressed) {
+                    // Ignore if overlay is already visible
+                    if (IsWindowVisible(g_app.overlayWnd)) {
+                        return 1;
+                    }
                     // Post message to main window to trigger capture
                     PostMessageW(g_app.mainWnd, WM_TRIGGER_CAPTURE, MODE_RECTANGLE, 0);
                     // Block the key from reaching Windows Snipping Tool

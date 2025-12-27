@@ -295,6 +295,14 @@ LRESULT CALLBACK OverlayWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPara
         }
         return 0;
 
+    case WM_RBUTTONDOWN:
+        HideOverlay();
+        return 0;
+
+    case WM_CLOSE:
+        HideOverlay();
+        return 0;
+
     case WM_ERASEBKGND:
         return 1;
 

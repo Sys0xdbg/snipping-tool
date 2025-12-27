@@ -22,6 +22,7 @@ add_executable(snip WIN32
     src/mode_picker.cpp
     src/settings_dlg.cpp
     src/main_window.cpp
+    src/resources.rc
 )
 
 # Link Windows libraries
