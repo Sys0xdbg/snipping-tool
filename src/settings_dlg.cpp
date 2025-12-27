@@ -303,99 +303,102 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
+        int clientWidth = clientRect.right;
 
         int y = SETTINGS_PADDING;
-        int contentWidth = SETTINGS_WIDTH - SETTINGS_PADDING * 2;
+        int leftPad = (int)(SETTINGS_PADDING * 0.7f);
+        int rightPad = leftPad;
+        int contentWidth = clientWidth - leftPad - rightPad;
 
-        RECT titleRect = { SETTINGS_PADDING, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 30 };
+        RECT titleRect = { leftPad, y, clientWidth - SETTINGS_PADDING, y + 30 };
         DrawTextGdiPlus(hdc, L"Settings", titleRect, Colors::Text, 18.0f, true);
         y += 40;
 
-        RECT pathLabel = { SETTINGS_PADDING, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 20 };
+        RECT pathLabel = { leftPad, y, clientWidth - SETTINGS_PADDING, y + 20 };
         DrawTextGdiPlus(hdc, L"Screenshot save location", pathLabel, Colors::TextSecondary, 12.0f);
         y += 24;
 
-        RECT pathBg = { SETTINGS_PADDING, y, SETTINGS_WIDTH - SETTINGS_PADDING - 85, y + 30 };
+        RECT pathBg = { leftPad, y, clientWidth - rightPad - 85, y + 30 };
         DrawRoundedRect(hdc, pathBg, 4, Colors::Surface, Colors::Border, 1);
 
-        g_settingsBtns[0].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 75, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 30 };
+        g_settingsBtns[0].rect = { clientWidth - rightPad - 75, y, clientWidth - rightPad, y + 30 };
         DrawSettingsButton(hdc, g_settingsBtns[0].rect, L"Browse", false, g_hoveredBtn == BTN_BROWSE);
         y += 46;
 
-        DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        RECT autoLabel = { SETTINGS_PADDING + 12, y + 8, SETTINGS_WIDTH - 80, y + 26 };
+        DrawSettingsCard(hdc, leftPad, y, contentWidth, SETTINGS_ROW_HEIGHT);
+        RECT autoLabel = { leftPad + 12, y + 8, clientWidth - 80, y + 26 };
         DrawTextGdiPlus(hdc, L"Auto-save screenshots", autoLabel, Colors::Text, 13.0f);
-        RECT autoDesc = { SETTINGS_PADDING + 12, y + 26, SETTINGS_WIDTH - 80, y + 42 };
+        RECT autoDesc = { leftPad + 12, y + 26, clientWidth - 80, y + 42 };
         DrawTextGdiPlus(hdc, L"Skip the save dialog", autoDesc, Colors::TextSecondary, 11.0f);
-        DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempAutoSave, g_hoveredToggle == TOGGLE_AUTOSAVE);
+        DrawToggleSwitch(hdc, clientWidth - rightPad - 56, y + 14, g_tempAutoSave, g_hoveredToggle == TOGGLE_AUTOSAVE);
         y += SETTINGS_ROW_HEIGHT + 12;
 
-        RECT hkHeader = { SETTINGS_PADDING, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 20 };
+        RECT hkHeader = { leftPad, y, clientWidth - SETTINGS_PADDING, y + 20 };
         DrawTextGdiPlus(hdc, L"Keyboard shortcuts", hkHeader, Colors::TextSecondary, 12.0f);
         y += 28;
 
-        DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        RECT rectLabel = { SETTINGS_PADDING + 12, y + 6, 140, y + 24 };
+        DrawSettingsCard(hdc, leftPad, y, contentWidth, SETTINGS_ROW_HEIGHT);
+        RECT rectLabel = { leftPad + 12, y + 6, 140, y + 24 };
         DrawTextGdiPlus(hdc, L"Rectangle", rectLabel, Colors::Text, 13.0f);
-        RECT rectHk = { SETTINGS_PADDING + 12, y + 24, 200, y + 42 };
+        RECT rectHk = { leftPad + 12, y + 24, 200, y + 42 };
         DrawTextGdiPlus(hdc, g_tempHotkeyRect.GetString().c_str(), rectHk, Colors::TextSecondary, 11.0f);
-        g_settingsBtns[1].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 115, y + 10, SETTINGS_WIDTH - SETTINGS_PADDING - 60, y + 38 };
+        g_settingsBtns[1].rect = { clientWidth - rightPad - 119, y + 10, clientWidth - rightPad - 64, y + 38 };
         DrawSettingsButton(hdc, g_settingsBtns[1].rect, g_app.recordingHotkeyType == 1 ? L"..." : L"Record", false, g_hoveredBtn == BTN_RECORD_RECT);
-        DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempRectEnabled, g_hoveredToggle == TOGGLE_RECT_ENABLED);
+        DrawToggleSwitch(hdc, clientWidth - rightPad - 56, y + 14, g_tempRectEnabled, g_hoveredToggle == TOGGLE_RECT_ENABLED);
         y += SETTINGS_ROW_HEIGHT + 4;
 
-        DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        RECT winLabel = { SETTINGS_PADDING + 12, y + 6, 140, y + 24 };
+        DrawSettingsCard(hdc, leftPad, y, contentWidth, SETTINGS_ROW_HEIGHT);
+        RECT winLabel = { leftPad + 12, y + 6, 140, y + 24 };
         DrawTextGdiPlus(hdc, L"Window", winLabel, Colors::Text, 13.0f);
-        RECT winHk = { SETTINGS_PADDING + 12, y + 24, 200, y + 42 };
+        RECT winHk = { leftPad + 12, y + 24, 200, y + 42 };
         DrawTextGdiPlus(hdc, g_tempHotkeyWindow.GetString().c_str(), winHk, Colors::TextSecondary, 11.0f);
-        g_settingsBtns[2].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 115, y + 10, SETTINGS_WIDTH - SETTINGS_PADDING - 60, y + 38 };
+        g_settingsBtns[2].rect = { clientWidth - rightPad - 119, y + 10, clientWidth - rightPad - 64, y + 38 };
         DrawSettingsButton(hdc, g_settingsBtns[2].rect, g_app.recordingHotkeyType == 2 ? L"..." : L"Record", false, g_hoveredBtn == BTN_RECORD_WIN);
-        DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempWinEnabled, g_hoveredToggle == TOGGLE_WIN_ENABLED);
+        DrawToggleSwitch(hdc, clientWidth - rightPad - 56, y + 14, g_tempWinEnabled, g_hoveredToggle == TOGGLE_WIN_ENABLED);
         y += SETTINGS_ROW_HEIGHT + 4;
 
-        DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        RECT fullLabel = { SETTINGS_PADDING + 12, y + 6, 140, y + 24 };
+        DrawSettingsCard(hdc, leftPad, y, contentWidth, SETTINGS_ROW_HEIGHT);
+        RECT fullLabel = { leftPad + 12, y + 6, 140, y + 24 };
         DrawTextGdiPlus(hdc, L"Fullscreen", fullLabel, Colors::Text, 13.0f);
-        RECT fullHk = { SETTINGS_PADDING + 12, y + 24, 200, y + 42 };
+        RECT fullHk = { leftPad + 12, y + 24, 200, y + 42 };
         DrawTextGdiPlus(hdc, g_tempHotkeyFullscreen.GetString().c_str(), fullHk, Colors::TextSecondary, 11.0f);
-        g_settingsBtns[3].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 115, y + 10, SETTINGS_WIDTH - SETTINGS_PADDING - 60, y + 38 };
+        g_settingsBtns[3].rect = { clientWidth - rightPad - 119, y + 10, clientWidth - rightPad - 64, y + 38 };
         DrawSettingsButton(hdc, g_settingsBtns[3].rect, g_app.recordingHotkeyType == 3 ? L"..." : L"Record", false, g_hoveredBtn == BTN_RECORD_FULL);
-        DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempFullEnabled, g_hoveredToggle == TOGGLE_FULL_ENABLED);
+        DrawToggleSwitch(hdc, clientWidth - rightPad - 56, y + 14, g_tempFullEnabled, g_hoveredToggle == TOGGLE_FULL_ENABLED);
         y += SETTINGS_ROW_HEIGHT + 4;
 
-        DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        RECT textLabel = { SETTINGS_PADDING + 12, y + 6, 140, y + 24 };
+        DrawSettingsCard(hdc, leftPad, y, contentWidth, SETTINGS_ROW_HEIGHT);
+        RECT textLabel = { leftPad + 12, y + 6, 140, y + 24 };
         DrawTextGdiPlus(hdc, L"Text (OCR)", textLabel, Colors::Text, 13.0f);
-        RECT textHk = { SETTINGS_PADDING + 12, y + 24, 200, y + 42 };
+        RECT textHk = { leftPad + 12, y + 24, 200, y + 42 };
         DrawTextGdiPlus(hdc, g_tempHotkeyText.GetString().c_str(), textHk, Colors::TextSecondary, 11.0f);
-        g_settingsBtns[4].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 115, y + 10, SETTINGS_WIDTH - SETTINGS_PADDING - 60, y + 38 };
+        g_settingsBtns[4].rect = { clientWidth - rightPad - 119, y + 10, clientWidth - rightPad - 64, y + 38 };
         DrawSettingsButton(hdc, g_settingsBtns[4].rect, g_app.recordingHotkeyType == 4 ? L"..." : L"Record", false, g_hoveredBtn == BTN_RECORD_TEXT);
-        DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempTextEnabled, g_hoveredToggle == TOGGLE_TEXT_ENABLED);
+        DrawToggleSwitch(hdc, clientWidth - rightPad - 56, y + 14, g_tempTextEnabled, g_hoveredToggle == TOGGLE_TEXT_ENABLED);
         y += SETTINGS_ROW_HEIGHT + 12;
 
-        RECT sysHeader = { SETTINGS_PADDING, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 20 };
+        RECT sysHeader = { leftPad, y, clientWidth - SETTINGS_PADDING, y + 20 };
         DrawTextGdiPlus(hdc, L"System", sysHeader, Colors::TextSecondary, 12.0f);
         y += 28;
 
-        DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        RECT replLabel = { SETTINGS_PADDING + 12, y + 8, SETTINGS_WIDTH - 80, y + 26 };
+        DrawSettingsCard(hdc, leftPad, y, contentWidth, SETTINGS_ROW_HEIGHT);
+        RECT replLabel = { leftPad + 12, y + 8, clientWidth - 80, y + 26 };
         DrawTextGdiPlus(hdc, L"Replace Windows Snipping Tool", replLabel, Colors::Text, 13.0f);
-        RECT replDesc = { SETTINGS_PADDING + 12, y + 26, SETTINGS_WIDTH - 80, y + 42 };
+        RECT replDesc = { leftPad + 12, y + 26, clientWidth - 80, y + 42 };
         DrawTextGdiPlus(hdc, L"Capture Win+Shift+S", replDesc, Colors::TextSecondary, 11.0f);
-        DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempReplaceWin, g_hoveredToggle == TOGGLE_REPLACE_WIN);
+        DrawToggleSwitch(hdc, clientWidth - rightPad - 56, y + 14, g_tempReplaceWin, g_hoveredToggle == TOGGLE_REPLACE_WIN);
         y += SETTINGS_ROW_HEIGHT + 4;
 
-        DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        RECT startLabel = { SETTINGS_PADDING + 12, y + 8, SETTINGS_WIDTH - 80, y + 26 };
+        DrawSettingsCard(hdc, leftPad, y, contentWidth, SETTINGS_ROW_HEIGHT);
+        RECT startLabel = { leftPad + 12, y + 8, clientWidth - 80, y + 26 };
         DrawTextGdiPlus(hdc, L"Start with Windows", startLabel, Colors::Text, 13.0f);
-        RECT startDesc = { SETTINGS_PADDING + 12, y + 26, SETTINGS_WIDTH - 80, y + 42 };
+        RECT startDesc = { leftPad + 12, y + 26, clientWidth - 80, y + 42 };
         DrawTextGdiPlus(hdc, L"Launch automatically", startDesc, Colors::TextSecondary, 11.0f);
-        DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempStartup, g_hoveredToggle == TOGGLE_STARTUP);
+        DrawToggleSwitch(hdc, clientWidth - rightPad - 56, y + 14, g_tempStartup, g_hoveredToggle == TOGGLE_STARTUP);
         y += SETTINGS_ROW_HEIGHT + 20;
 
-        g_settingsBtns[5].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 140, y, SETTINGS_WIDTH - SETTINGS_PADDING - 75, y + 32 };
-        g_settingsBtns[6].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 70, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 32 };
+        g_settingsBtns[5].rect = { clientWidth - rightPad - 134, y, clientWidth - rightPad - 66, y + 32 };
+        g_settingsBtns[6].rect = { clientWidth - rightPad - 58, y, clientWidth - rightPad, y + 32 };
         DrawSettingsButton(hdc, g_settingsBtns[5].rect, L"Save", true, g_hoveredBtn == BTN_SAVE_SETTINGS);
         DrawSettingsButton(hdc, g_settingsBtns[6].rect, L"Cancel", false, g_hoveredBtn == BTN_CANCEL_SETTINGS);
 
@@ -408,6 +411,10 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         int y = GET_Y_LPARAM(lParam);
         POINT pt = { x, y };
 
+        RECT clientRect;
+        GetClientRect(hwnd, &clientRect);
+        int clientWidth = clientRect.right;
+
         int newHoveredBtn = 0;
         for (int i = 0; i < 7; i++) {
             if (PtInRect(&g_settingsBtns[i].rect, pt)) {
@@ -416,9 +423,10 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             }
         }
 
+        int rightPad = (int)(SETTINGS_PADDING * 0.7f);
         int newHoveredToggle = 0;
-        int toggleX = SETTINGS_WIDTH - SETTINGS_PADDING - 56;
-        if (x >= toggleX && x <= toggleX + 50) {
+        int toggleX = clientWidth - rightPad - 56;
+        if (x >= toggleX && x <= toggleX + 44) {
             if (y >= 130 && y < 130 + SETTINGS_ROW_HEIGHT) newHoveredToggle = TOGGLE_AUTOSAVE;
             else if (y >= 222 && y < 222 + SETTINGS_ROW_HEIGHT) newHoveredToggle = TOGGLE_RECT_ENABLED;
             else if (y >= 278 && y < 278 + SETTINGS_ROW_HEIGHT) newHoveredToggle = TOGGLE_WIN_ENABLED;
@@ -544,8 +552,12 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             }
         }
 
-        int toggleX = SETTINGS_WIDTH - SETTINGS_PADDING - 56;
-        if (x >= toggleX && x <= toggleX + 50) {
+        RECT clientRect;
+        GetClientRect(hwnd, &clientRect);
+        int clientWidth = clientRect.right;
+        int rightPad = (int)(SETTINGS_PADDING * 0.7f);
+        int toggleX = clientWidth - rightPad - 56;
+        if (x >= toggleX && x <= toggleX + 44) {
             RECT toggleRect = { toggleX, 0, toggleX + 50, 0 };
             if (y >= 130 && y < 130 + SETTINGS_ROW_HEIGHT) {
                 g_tempAutoSave = !g_tempAutoSave;
