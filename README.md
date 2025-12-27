@@ -46,7 +46,7 @@ Download the latest release from the [Releases](https://github.com/Sys0xdbg/snip
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/snipping-tool.git
+git clone https://github.com/Sys0xdbg/snipping-tool.git
 cd snipping-tool
 
 # Create build directory
