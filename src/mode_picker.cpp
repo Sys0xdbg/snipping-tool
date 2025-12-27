@@ -193,8 +193,9 @@ void ShowModePicker() {
 
     CacheWindowList();
 
-    int width = GetSystemMetrics(SM_CXSCREEN);
-    int height = GetSystemMetrics(SM_CYSCREEN);
+    // Use DXGI screen dimensions for consistency
+    int width = g_app.screenWidth;
+    int height = g_app.screenHeight;
     SetWindowPos(g_app.overlayWnd, HWND_TOPMOST, 0, 0, width, height, SWP_SHOWWINDOW);
 
     g_printScreenMode = true;

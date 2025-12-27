@@ -154,8 +154,9 @@ HBITMAP CaptureScreenToBitmap() {
     HDC screenDC = GetDC(nullptr);
     HDC memDC = CreateCompatibleDC(screenDC);
 
-    int width = GetSystemMetrics(SM_CXSCREEN);
-    int height = GetSystemMetrics(SM_CYSCREEN);
+    // Use the same dimensions as DXGI capture for consistency
+    int width = g_app.screenWidth;
+    int height = g_app.screenHeight;
 
     HBITMAP bitmap = CreateCompatibleBitmap(screenDC, width, height);
     HBITMAP oldBitmap = (HBITMAP)SelectObject(memDC, bitmap);

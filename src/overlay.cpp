@@ -7,9 +7,24 @@
 
 RECT GetWindowVisibleRect(HWND hwnd) {
     RECT rect = {};
-    if (FAILED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(rect)))) {
-        GetWindowRect(hwnd, &rect);
+    RECT windowRect = {};
+    GetWindowRect(hwnd, &windowRect);
+
+    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(rect)))) {
+        // DWMWA_EXTENDED_FRAME_BOUNDS should give visible bounds
+        // Add 1 pixel inset to remove any remaining shadow/edge artifacts
+        rect.left += 1;
+        rect.top += 1;
+        rect.right -= 1;
+        rect.bottom -= 1;
+    } else {
+        // Fallback: adjust for typical Windows 10/11 invisible borders
+        rect = windowRect;
+        rect.left += 8;
+        rect.right -= 8;
+        rect.bottom -= 8;
     }
+
     return rect;
 }
 
@@ -63,8 +78,9 @@ void ShowOverlay() {
 
     CacheWindowList();
 
-    int width = GetSystemMetrics(SM_CXSCREEN);
-    int height = GetSystemMetrics(SM_CYSCREEN);
+    // Use DXGI screen dimensions for consistency
+    int width = g_app.screenWidth;
+    int height = g_app.screenHeight;
 
     SetWindowPos(g_app.overlayWnd, HWND_TOPMOST, 0, 0, width, height, SWP_SHOWWINDOW);
     SetForegroundWindow(g_app.overlayWnd);

@@ -24,6 +24,9 @@ const int NUM_BUTTONS = sizeof(g_buttons) / sizeof(g_buttons[0]);
 // Entry Point
 //------------------------------------------------------------------------------
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+    // Enable Per-Monitor DPI awareness for accurate window coordinates
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
 
     // Initialize GDI+
