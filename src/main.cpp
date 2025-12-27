@@ -347,18 +347,28 @@ void ApplyWindowsSnippingReplacement(bool enable) {
     }
 }
 
+bool IsWinShiftS(const HotkeyConfig& hk) {
+    return (hk.modifiers == (MOD_WIN | MOD_SHIFT) && hk.vk == 'S');
+}
+
 void RegisterHotkeys() {
     UnregisterHotKey(g_app.mainWnd, HOTKEY_RECTANGLE);
     UnregisterHotKey(g_app.mainWnd, HOTKEY_WINDOW);
     UnregisterHotKey(g_app.mainWnd, HOTKEY_FULLSCREEN);
 
+    // Rectangle hotkey - skip if it's Win+Shift+S and we're using the keyboard hook
     if (g_app.settings.hotkeyRect.enabled && g_app.settings.hotkeyRect.vk != 0) {
-        BOOL result = RegisterHotKey(g_app.mainWnd, HOTKEY_RECTANGLE,
-            g_app.settings.hotkeyRect.modifiers | MOD_NOREPEAT,
-            g_app.settings.hotkeyRect.vk);
-        if (!result) {
-            MessageBoxW(nullptr, L"Failed to register Rectangle hotkey.\nIt may already be in use by another application.",
-                L"Hotkey Registration Failed", MB_ICONWARNING);
+        // Don't register Win+Shift+S - it's handled by keyboard hook when replacing Windows Snipping Tool
+        if (g_app.settings.replaceWindowsSnipping && IsWinShiftS(g_app.settings.hotkeyRect)) {
+            // Skip - keyboard hook handles this
+        } else {
+            BOOL result = RegisterHotKey(g_app.mainWnd, HOTKEY_RECTANGLE,
+                g_app.settings.hotkeyRect.modifiers | MOD_NOREPEAT,
+                g_app.settings.hotkeyRect.vk);
+            if (!result) {
+                MessageBoxW(nullptr, L"Failed to register Rectangle hotkey.\nIt may already be in use by another application.",
+                    L"Hotkey Registration Failed", MB_ICONWARNING);
+            }
         }
     }
     if (g_app.settings.hotkeyWindow.enabled && g_app.settings.hotkeyWindow.vk != 0) {
