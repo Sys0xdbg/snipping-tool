@@ -46,64 +46,59 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
     switch (msg) {
     case WM_PAINT: {
         PAINTSTRUCT ps;
-        HDC hdcScreen = BeginPaint(hwnd, &ps);
+        HDC hdc = BeginPaint(hwnd, &ps);
 
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
 
-        HDC hdc = CreateCompatibleDC(hdcScreen);
-        HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, clientRect.right, clientRect.bottom);
-        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdc, hBitmap);
-
         Gdiplus::Graphics graphics(hdc);
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
         graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
-
-        Gdiplus::GraphicsPath bgPath;
-        int radius = 8;
-        bgPath.AddArc(0, 0, radius * 2, radius * 2, 180, 90);
-        bgPath.AddArc(clientRect.right - radius * 2, 0, radius * 2, radius * 2, 270, 90);
-        bgPath.AddArc(clientRect.right - radius * 2, clientRect.bottom - radius * 2, radius * 2, radius * 2, 0, 90);
-        bgPath.AddArc(0, clientRect.bottom - radius * 2, radius * 2, radius * 2, 90, 90);
-        bgPath.CloseFigure();
-
-        Gdiplus::SolidBrush bgBrush(Gdiplus::Color(250, 44, 44, 44));
-        graphics.FillPath(&bgBrush, &bgPath);
-        Gdiplus::Pen borderPen(Gdiplus::Color(255, 70, 70, 70), 1.0f);
-        graphics.DrawPath(&borderPen, &bgPath);
 
         Gdiplus::FontFamily fontFamily(L"Segoe UI");
         Gdiplus::SolidBrush textBrush(Gdiplus::Color(255, 255, 255, 255));
 
         // Handle text-only notification
         if (g_notifIsText) {
-            Gdiplus::Color titleColor = g_notifIsError
+            // Draw icon
+            Gdiplus::FontFamily iconFamily(L"Segoe UI Symbol");
+            Gdiplus::Font iconFont(&iconFamily, 18, Gdiplus::FontStyleRegular);
+            Gdiplus::SolidBrush iconBrush(g_notifIsError
                 ? Gdiplus::Color(255, 255, 100, 100)
-                : Gdiplus::Color(255, 100, 200, 100);
-            Gdiplus::SolidBrush titleBrush(titleColor);
-            Gdiplus::Font titleFont(&fontFamily, 12, Gdiplus::FontStyleBold);
-            graphics.DrawString(g_notifTitle.c_str(), -1, &titleFont, Gdiplus::PointF(16.0f, 14.0f), &titleBrush);
+                : Gdiplus::Color(255, 76, 194, 255));
+            const wchar_t* icon = g_notifIsError ? L"\u26A0" : L"\u2714";  // Warning or Checkmark
+            graphics.DrawString(icon, -1, &iconFont, Gdiplus::PointF(16.0f, 16.0f), &iconBrush);
 
-            Gdiplus::Font msgFont(&fontFamily, 10, Gdiplus::FontStyleRegular);
-            graphics.DrawString(g_notifMessage.c_str(), -1, &msgFont, Gdiplus::PointF(16.0f, 38.0f), &textBrush);
+            // Title
+            Gdiplus::Font titleFont(&fontFamily, 13, Gdiplus::FontStyleBold);
+            graphics.DrawString(g_notifTitle.c_str(), -1, &titleFont, Gdiplus::PointF(44.0f, 14.0f), &textBrush);
 
-            BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
-            SelectObject(hdc, hOldBitmap);
-            DeleteObject(hBitmap);
-            DeleteDC(hdc);
+            // Message
+            Gdiplus::SolidBrush msgBrush(Gdiplus::Color(255, 180, 180, 180));
+            Gdiplus::Font msgFont(&fontFamily, 11, Gdiplus::FontStyleRegular);
+            graphics.DrawString(g_notifMessage.c_str(), -1, &msgFont, Gdiplus::PointF(44.0f, 38.0f), &msgBrush);
+
             EndPaint(hwnd, &ps);
             return 0;
         }
 
-        Gdiplus::Font titleFont(&fontFamily, 12, Gdiplus::FontStyleBold);
-        graphics.DrawString(L"Screenshot saved", -1, &titleFont, Gdiplus::PointF(16.0f, 12.0f), &textBrush);
+        // Screenshot notification
+        // Draw success icon
+        Gdiplus::FontFamily iconFamily(L"Segoe UI Symbol");
+        Gdiplus::Font iconFont(&iconFamily, 16, Gdiplus::FontStyleRegular);
+        Gdiplus::SolidBrush iconBrush(Gdiplus::Color(255, 76, 194, 255));
+        graphics.DrawString(L"\u2714", -1, &iconFont, Gdiplus::PointF(16.0f, 10.0f), &iconBrush);
+
+        // Title
+        Gdiplus::Font titleFont(&fontFamily, 13, Gdiplus::FontStyleBold);
+        graphics.DrawString(L"Screenshot saved", -1, &titleFont, Gdiplus::PointF(40.0f, 10.0f), &textBrush);
 
         int previewX = (NOTIF_WIDTH - NOTIF_PREVIEW_WIDTH) / 2;
         int previewY = 38;
 
         if (g_app.notificationPreview) {
             Gdiplus::GraphicsPath clipPath;
-            int r = 6;
+            int r = 8;
             clipPath.AddArc(previewX, previewY, r * 2, r * 2, 180, 90);
             clipPath.AddArc(previewX + NOTIF_PREVIEW_WIDTH - r * 2, previewY, r * 2, r * 2, 270, 90);
             clipPath.AddArc(previewX + NOTIF_PREVIEW_WIDTH - r * 2, previewY + NOTIF_PREVIEW_HEIGHT - r * 2, r * 2, r * 2, 0, 90);
@@ -120,7 +115,7 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             }
             graphics.ResetClip();
 
-            Gdiplus::Pen previewBorder(Gdiplus::Color(60, 255, 255, 255), 1.0f);
+            Gdiplus::Pen previewBorder(Gdiplus::Color(80, 255, 255, 255), 1.0f);
             graphics.DrawPath(&previewBorder, &clipPath);
         }
 
@@ -141,7 +136,7 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         g_notifButtons[2].rect = { btn3X, btnY, btn3X + btnWidth, btnY + NOTIF_BTN_HEIGHT };
         g_notifButtons[2].label = L"Dismiss";
 
-        Gdiplus::Font btnFont(&fontFamily, 10, Gdiplus::FontStyleRegular);
+        Gdiplus::Font btnFont(&fontFamily, 11, Gdiplus::FontStyleRegular);
         Gdiplus::StringFormat centerFormat;
         centerFormat.SetAlignment(Gdiplus::StringAlignmentCenter);
         centerFormat.SetLineAlignment(Gdiplus::StringAlignmentCenter);
@@ -151,12 +146,12 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             bool hovered = (g_app.notificationHovered == i);
 
             Gdiplus::Color btnBg = hovered
-                ? Gdiplus::Color(255, 65, 65, 65)
-                : Gdiplus::Color(255, 55, 55, 55);
+                ? Gdiplus::Color(180, 80, 80, 80)
+                : Gdiplus::Color(120, 60, 60, 60);
             Gdiplus::SolidBrush btnBrush(btnBg);
 
             Gdiplus::GraphicsPath btnPath;
-            int br = 4;
+            int br = 6;
             btnPath.AddArc(rect.left, rect.top, br * 2, br * 2, 180, 90);
             btnPath.AddArc(rect.right - br * 2, rect.top, br * 2, br * 2, 270, 90);
             btnPath.AddArc(rect.right - br * 2, rect.bottom - br * 2, br * 2, br * 2, 0, 90);
@@ -164,19 +159,15 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
             btnPath.CloseFigure();
             graphics.FillPath(&btnBrush, &btnPath);
 
-            Gdiplus::Pen btnBorder(Gdiplus::Color(100, 255, 255, 255), 1.0f);
-            graphics.DrawPath(&btnBorder, &btnPath);
+            if (hovered) {
+                Gdiplus::Pen btnBorder(Gdiplus::Color(150, 255, 255, 255), 1.0f);
+                graphics.DrawPath(&btnBorder, &btnPath);
+            }
 
             Gdiplus::RectF btnRect((float)rect.left, (float)rect.top,
                 (float)(rect.right - rect.left), (float)(rect.bottom - rect.top));
             graphics.DrawString(g_notifButtons[i].label, -1, &btnFont, btnRect, &centerFormat, &textBrush);
         }
-
-        BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
-
-        SelectObject(hdc, hOldBitmap);
-        DeleteObject(hBitmap);
-        DeleteDC(hdc);
 
         EndPaint(hwnd, &ps);
         return 0;
@@ -281,8 +272,15 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         }
         return 0;
 
-    case WM_ERASEBKGND:
+    case WM_ERASEBKGND: {
+        HDC hdc = (HDC)wParam;
+        RECT rc;
+        GetClientRect(hwnd, &rc);
+        HBRUSH brush = CreateSolidBrush(RGB(0, 0, 0));
+        FillRect(hdc, &rc, brush);
+        DeleteObject(brush);
         return 1;
+    }
 
     default:
         return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -328,14 +326,26 @@ void ShowNotification(const wchar_t* filepath) {
     g_notifClosing = false;
 
     g_app.notificationWnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         L"SnippingToolNotification", L"",
         WS_POPUP,
         g_notifStartX, y, NOTIF_WIDTH, NOTIF_HEIGHT,
         nullptr, nullptr, g_app.hInstance, nullptr
     );
 
-    SetLayeredWindowAttributes(g_app.notificationWnd, 0, 255, LWA_ALPHA);
+    // Enable dark mode and rounded corners
+    BOOL darkMode = TRUE;
+    DwmSetWindowAttribute(g_app.notificationWnd, 20, &darkMode, sizeof(darkMode));
+    DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+    DwmSetWindowAttribute(g_app.notificationWnd, 33, &corner, sizeof(corner));
+
+    // Enable Acrylic blur effect (better for popups)
+    int backdropType = 3;  // DWMSBT_TRANSIENTWINDOW (Acrylic)
+    DwmSetWindowAttribute(g_app.notificationWnd, 38, &backdropType, sizeof(backdropType));
+
+    MARGINS margins = { -1, -1, -1, -1 };
+    DwmExtendFrameIntoClientArea(g_app.notificationWnd, &margins);
+
     ShowWindow(g_app.notificationWnd, SW_SHOWNOACTIVATE);
 
     SetTimer(g_app.notificationWnd, NOTIF_ANIM_TIMER_ID, NOTIF_ANIM_DURATION / NOTIF_ANIM_STEPS, nullptr);
@@ -391,14 +401,26 @@ void ShowTextNotification(const wchar_t* title, const wchar_t* message, bool isE
     g_notifClosing = false;
 
     g_app.notificationWnd = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
         L"SnippingToolNotification", L"",
         WS_POPUP,
         g_notifStartX, y, TEXT_NOTIF_WIDTH, TEXT_NOTIF_HEIGHT,
         nullptr, nullptr, g_app.hInstance, nullptr
     );
 
-    SetLayeredWindowAttributes(g_app.notificationWnd, 0, 255, LWA_ALPHA);
+    // Enable dark mode and rounded corners
+    BOOL darkMode = TRUE;
+    DwmSetWindowAttribute(g_app.notificationWnd, 20, &darkMode, sizeof(darkMode));
+    DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_ROUND;
+    DwmSetWindowAttribute(g_app.notificationWnd, 33, &corner, sizeof(corner));
+
+    // Enable Acrylic blur effect
+    int backdropType = 3;  // DWMSBT_TRANSIENTWINDOW (Acrylic)
+    DwmSetWindowAttribute(g_app.notificationWnd, 38, &backdropType, sizeof(backdropType));
+
+    MARGINS margins = { -1, -1, -1, -1 };
+    DwmExtendFrameIntoClientArea(g_app.notificationWnd, &margins);
+
     ShowWindow(g_app.notificationWnd, SW_SHOWNOACTIVATE);
 
     SetTimer(g_app.notificationWnd, NOTIF_ANIM_TIMER_ID, NOTIF_ANIM_DURATION / NOTIF_ANIM_STEPS, nullptr);
