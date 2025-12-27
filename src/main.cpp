@@ -368,6 +368,15 @@ void ApplyWindowsSnippingReplacement(bool enable) {
     } else {
         UninstallKeyboardHook();
     }
+
+    // Set registry key to disable/enable Windows Print Screen snipping
+    // HKEY_CURRENT_USER\Control Panel\Keyboard\PrintScreenKeyForSnippingEnabled
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Control Panel\\Keyboard", 0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+        DWORD value = enable ? 0 : 1;  // 0 = disable Windows snipping, 1 = enable
+        RegSetValueExW(hKey, L"PrintScreenKeyForSnippingEnabled", 0, REG_DWORD, (BYTE*)&value, sizeof(value));
+        RegCloseKey(hKey);
+    }
 }
 
 bool IsWinShiftS(const HotkeyConfig& hk) {
@@ -944,6 +953,17 @@ HBITMAP CaptureScreenToBitmap() {
 
 void StartCapture();
 
+// Get actual visible window bounds (excludes shadow)
+RECT GetWindowVisibleRect(HWND hwnd) {
+    RECT rect = {};
+    // Try to get the extended frame bounds (actual visible area without shadow)
+    if (FAILED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(rect)))) {
+        // Fallback to regular window rect
+        GetWindowRect(hwnd, &rect);
+    }
+    return rect;
+}
+
 // Callback for EnumWindows to build window list
 BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam) {
     // Skip invisible windows
@@ -955,13 +975,12 @@ BOOL CALLBACK EnumWindowsCallback(HWND hwnd, LPARAM lParam) {
     // Skip our own windows
     if (hwnd == g_app.mainWnd || hwnd == g_app.overlayWnd) return TRUE;
 
-    // Get window rect
-    RECT rect;
-    if (GetWindowRect(hwnd, &rect)) {
-        // Skip zero-size windows
-        if (rect.right > rect.left && rect.bottom > rect.top) {
-            g_app.windowList.push_back({ hwnd, rect });
-        }
+    // Get window rect (use extended frame bounds for accurate size)
+    RECT rect = GetWindowVisibleRect(hwnd);
+
+    // Skip zero-size windows
+    if (rect.right > rect.left && rect.bottom > rect.top) {
+        g_app.windowList.push_back({ hwnd, rect });
     }
 
     return TRUE;
