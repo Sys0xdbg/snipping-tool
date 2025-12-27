@@ -12,6 +12,16 @@ endif()
 # Main executable (WIN32 = GUI app, no console)
 add_executable(snip WIN32
     src/main.cpp
+    src/settings.cpp
+    src/hotkeys.cpp
+    src/capture.cpp
+    src/drawing.cpp
+    src/tooltip.cpp
+    src/notification.cpp
+    src/overlay.cpp
+    src/mode_picker.cpp
+    src/settings_dlg.cpp
+    src/main_window.cpp
 )
 
 # Link Windows libraries
