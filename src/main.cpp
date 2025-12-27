@@ -599,24 +599,34 @@ bool SaveScreenshot(const RECT& region, const wchar_t* filename) {
 }
 
 //------------------------------------------------------------------------------
-// Screenshot Notification
+// Screenshot Notification (Windows 11 Style)
 //------------------------------------------------------------------------------
-#define NOTIF_WIDTH 320
-#define NOTIF_HEIGHT 100
-#define NOTIF_PREVIEW_SIZE 70
-#define NOTIF_BTN_SIZE 32
+#define NOTIF_WIDTH 364
+#define NOTIF_HEIGHT 200
+#define NOTIF_PREVIEW_WIDTH 332
+#define NOTIF_PREVIEW_HEIGHT 100
+#define NOTIF_BTN_HEIGHT 32
 #define NOTIF_TIMER_ID 1
+#define NOTIF_ANIM_TIMER_ID 2
 #define NOTIF_DURATION 5000
+#define NOTIF_ANIM_DURATION 200
+#define NOTIF_ANIM_STEPS 15
 
 struct NotifButton {
     RECT rect;
     const wchar_t* icon;
-    const wchar_t* tooltip;
+    const wchar_t* label;
 };
 
 NotifButton g_notifButtons[3];  // Copy, Open Folder, Close
 
-HBITMAP CreatePreviewBitmap(const wchar_t* filepath, int size) {
+// Animation state
+int g_notifAnimStep = 0;
+int g_notifTargetX = 0;
+int g_notifStartX = 0;
+bool g_notifClosing = false;
+
+HBITMAP CreatePreviewBitmap(const wchar_t* filepath, int width, int height) {
     Gdiplus::Bitmap* original = Gdiplus::Bitmap::FromFile(filepath);
     if (!original || original->GetLastStatus() != Gdiplus::Ok) {
         delete original;
@@ -624,23 +634,23 @@ HBITMAP CreatePreviewBitmap(const wchar_t* filepath, int size) {
     }
 
     // Create scaled preview
-    Gdiplus::Bitmap preview(size, size, PixelFormat32bppARGB);
+    Gdiplus::Bitmap preview(width, height, PixelFormat32bppARGB);
     Gdiplus::Graphics graphics(&preview);
     graphics.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
     graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
 
     // Calculate scaling to fit while maintaining aspect ratio
-    float scaleX = (float)size / original->GetWidth();
-    float scaleY = (float)size / original->GetHeight();
+    float scaleX = (float)width / original->GetWidth();
+    float scaleY = (float)height / original->GetHeight();
     float scale = (std::min)(scaleX, scaleY);
     int scaledW = (int)(original->GetWidth() * scale);
     int scaledH = (int)(original->GetHeight() * scale);
-    int offsetX = (size - scaledW) / 2;
-    int offsetY = (size - scaledH) / 2;
+    int offsetX = (width - scaledW) / 2;
+    int offsetY = (height - scaledH) / 2;
 
     // Draw dark background
-    Gdiplus::SolidBrush bgBrush(Gdiplus::Color(255, 30, 30, 30));
-    graphics.FillRectangle(&bgBrush, 0, 0, size, size);
+    Gdiplus::SolidBrush bgBrush(Gdiplus::Color(255, 25, 25, 25));
+    graphics.FillRectangle(&bgBrush, 0, 0, width, height);
 
     graphics.DrawImage(original, offsetX, offsetY, scaledW, scaledH);
     delete original;
@@ -671,114 +681,102 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
         graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
         graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
 
-        // Background
+        // Background - Windows 11 style dark
         Gdiplus::GraphicsPath bgPath;
-        int radius = 12;
+        int radius = 8;
         bgPath.AddArc(0, 0, radius * 2, radius * 2, 180, 90);
         bgPath.AddArc(clientRect.right - radius * 2, 0, radius * 2, radius * 2, 270, 90);
         bgPath.AddArc(clientRect.right - radius * 2, clientRect.bottom - radius * 2, radius * 2, radius * 2, 0, 90);
         bgPath.AddArc(0, clientRect.bottom - radius * 2, radius * 2, radius * 2, 90, 90);
         bgPath.CloseFigure();
 
-        Gdiplus::SolidBrush bgBrush(Gdiplus::Color(245, 40, 40, 40));
+        Gdiplus::SolidBrush bgBrush(Gdiplus::Color(250, 44, 44, 44));
         graphics.FillPath(&bgBrush, &bgPath);
-        Gdiplus::Pen borderPen(Gdiplus::Color(255, 60, 60, 60), 1.0f);
+        Gdiplus::Pen borderPen(Gdiplus::Color(255, 70, 70, 70), 1.0f);
         graphics.DrawPath(&borderPen, &bgPath);
 
-        // Preview image
+        Gdiplus::FontFamily fontFamily(L"Segoe UI");
+        Gdiplus::SolidBrush textBrush(Gdiplus::Color(255, 255, 255, 255));
+
+        // Title at top
+        Gdiplus::Font titleFont(&fontFamily, 12, Gdiplus::FontStyleBold);
+        graphics.DrawString(L"Screenshot saved", -1, &titleFont, Gdiplus::PointF(16.0f, 12.0f), &textBrush);
+
+        // Preview image - centered, below title
+        int previewX = (NOTIF_WIDTH - NOTIF_PREVIEW_WIDTH) / 2;
+        int previewY = 38;
+
         if (g_app.notificationPreview) {
-            HDC memDC = CreateCompatibleDC(hdc);
-            HBITMAP oldBmp = (HBITMAP)SelectObject(memDC, g_app.notificationPreview);
-
-            // Draw with rounded corners
-            int previewX = 12;
-            int previewY = (NOTIF_HEIGHT - NOTIF_PREVIEW_SIZE) / 2;
-
             Gdiplus::GraphicsPath clipPath;
-            clipPath.AddArc(previewX, previewY, 8, 8, 180, 90);
-            clipPath.AddArc(previewX + NOTIF_PREVIEW_SIZE - 8, previewY, 8, 8, 270, 90);
-            clipPath.AddArc(previewX + NOTIF_PREVIEW_SIZE - 8, previewY + NOTIF_PREVIEW_SIZE - 8, 8, 8, 0, 90);
-            clipPath.AddArc(previewX, previewY + NOTIF_PREVIEW_SIZE - 8, 8, 8, 90, 90);
+            int r = 6;
+            clipPath.AddArc(previewX, previewY, r * 2, r * 2, 180, 90);
+            clipPath.AddArc(previewX + NOTIF_PREVIEW_WIDTH - r * 2, previewY, r * 2, r * 2, 270, 90);
+            clipPath.AddArc(previewX + NOTIF_PREVIEW_WIDTH - r * 2, previewY + NOTIF_PREVIEW_HEIGHT - r * 2, r * 2, r * 2, 0, 90);
+            clipPath.AddArc(previewX, previewY + NOTIF_PREVIEW_HEIGHT - r * 2, r * 2, r * 2, 90, 90);
             clipPath.CloseFigure();
 
             Gdiplus::Region clipRegion(&clipPath);
             graphics.SetClip(&clipRegion);
-            graphics.DrawImage(Gdiplus::Bitmap::FromHBITMAP(g_app.notificationPreview, nullptr),
-                previewX, previewY, NOTIF_PREVIEW_SIZE, NOTIF_PREVIEW_SIZE);
+
+            Gdiplus::Bitmap* previewBmp = Gdiplus::Bitmap::FromHBITMAP(g_app.notificationPreview, nullptr);
+            if (previewBmp) {
+                graphics.DrawImage(previewBmp, previewX, previewY, NOTIF_PREVIEW_WIDTH, NOTIF_PREVIEW_HEIGHT);
+                delete previewBmp;
+            }
             graphics.ResetClip();
 
-            SelectObject(memDC, oldBmp);
-            DeleteDC(memDC);
-
-            // Border around preview
-            Gdiplus::Pen previewBorder(Gdiplus::Color(100, 255, 255, 255), 1.0f);
+            // Subtle border
+            Gdiplus::Pen previewBorder(Gdiplus::Color(60, 255, 255, 255), 1.0f);
             graphics.DrawPath(&previewBorder, &clipPath);
         }
 
-        // Text
-        Gdiplus::FontFamily fontFamily(L"Segoe UI");
-        Gdiplus::Font titleFont(&fontFamily, 12, Gdiplus::FontStyleBold);
-        Gdiplus::Font subtitleFont(&fontFamily, 10, Gdiplus::FontStyleRegular);
-        Gdiplus::SolidBrush textBrush(Gdiplus::Color(255, 255, 255, 255));
-        Gdiplus::SolidBrush subtitleBrush(Gdiplus::Color(180, 255, 255, 255));
+        // Buttons at bottom - Windows 11 style
+        int btnY = NOTIF_HEIGHT - NOTIF_BTN_HEIGHT - 12;
+        int btnWidth = 100;
+        int btnSpacing = 10;
+        int totalBtnWidth = btnWidth * 3 + btnSpacing * 2;
+        int btnStartX = (NOTIF_WIDTH - totalBtnWidth) / 2;
 
-        int textX = 12 + NOTIF_PREVIEW_SIZE + 12;
-        graphics.DrawString(L"Screenshot saved", -1, &titleFont, Gdiplus::PointF((float)textX, 20.0f), &textBrush);
+        g_notifButtons[0].rect = { btnStartX, btnY, btnStartX + btnWidth, btnY + NOTIF_BTN_HEIGHT };
+        g_notifButtons[0].label = L"Copy";
 
-        // Show filename only
-        std::wstring filename = g_app.lastScreenshotPath;
-        size_t lastSlash = filename.find_last_of(L"\\/");
-        if (lastSlash != std::wstring::npos) {
-            filename = filename.substr(lastSlash + 1);
-        }
-        if (filename.length() > 25) {
-            filename = filename.substr(0, 22) + L"...";
-        }
-        graphics.DrawString(filename.c_str(), -1, &subtitleFont, Gdiplus::PointF((float)textX, 42.0f), &subtitleBrush);
+        int btn2X = btnStartX + btnWidth + btnSpacing;
+        g_notifButtons[1].rect = { btn2X, btnY, btn2X + btnWidth, btnY + NOTIF_BTN_HEIGHT };
+        g_notifButtons[1].label = L"Open folder";
 
-        // Buttons
-        int btnY = (NOTIF_HEIGHT - NOTIF_BTN_SIZE) / 2;
-        int btnX = NOTIF_WIDTH - 12 - NOTIF_BTN_SIZE;
+        int btn3X = btn2X + btnWidth + btnSpacing;
+        g_notifButtons[2].rect = { btn3X, btnY, btn3X + btnWidth, btnY + NOTIF_BTN_HEIGHT };
+        g_notifButtons[2].label = L"Dismiss";
 
-        // Close button
-        g_notifButtons[2].rect = { btnX, btnY, btnX + NOTIF_BTN_SIZE, btnY + NOTIF_BTN_SIZE };
-        g_notifButtons[2].icon = L"\u2715";
-        g_notifButtons[2].tooltip = L"Close";
-
-        // Open folder button
-        btnX -= NOTIF_BTN_SIZE + 8;
-        g_notifButtons[1].rect = { btnX, btnY, btnX + NOTIF_BTN_SIZE, btnY + NOTIF_BTN_SIZE };
-        g_notifButtons[1].icon = L"\u2750";  // Folder icon
-        g_notifButtons[1].tooltip = L"Open folder";
-
-        // Copy button
-        btnX -= NOTIF_BTN_SIZE + 8;
-        g_notifButtons[0].rect = { btnX, btnY, btnX + NOTIF_BTN_SIZE, btnY + NOTIF_BTN_SIZE };
-        g_notifButtons[0].icon = L"\u2398";  // Copy icon
-        g_notifButtons[0].tooltip = L"Copy to clipboard";
-
-        Gdiplus::Font iconFont(&fontFamily, 14, Gdiplus::FontStyleRegular);
+        Gdiplus::Font btnFont(&fontFamily, 10, Gdiplus::FontStyleRegular);
         Gdiplus::StringFormat centerFormat;
         centerFormat.SetAlignment(Gdiplus::StringAlignmentCenter);
         centerFormat.SetLineAlignment(Gdiplus::StringAlignmentCenter);
 
         for (int i = 0; i < 3; i++) {
-            RECT& r = g_notifButtons[i].rect;
-            Gdiplus::Color btnColor = (g_app.notificationHovered == i)
-                ? Gdiplus::Color(255, 70, 70, 70)
-                : Gdiplus::Color(255, 50, 50, 50);
-            Gdiplus::SolidBrush btnBrush(btnColor);
+            RECT& rect = g_notifButtons[i].rect;
+            bool hovered = (g_app.notificationHovered == i);
+
+            Gdiplus::Color btnBg = hovered
+                ? Gdiplus::Color(255, 65, 65, 65)
+                : Gdiplus::Color(255, 55, 55, 55);
+            Gdiplus::SolidBrush btnBrush(btnBg);
 
             Gdiplus::GraphicsPath btnPath;
-            btnPath.AddArc(r.left, r.top, 8, 8, 180, 90);
-            btnPath.AddArc(r.right - 8, r.top, 8, 8, 270, 90);
-            btnPath.AddArc(r.right - 8, r.bottom - 8, 8, 8, 0, 90);
-            btnPath.AddArc(r.left, r.bottom - 8, 8, 8, 90, 90);
+            int br = 4;
+            btnPath.AddArc(rect.left, rect.top, br * 2, br * 2, 180, 90);
+            btnPath.AddArc(rect.right - br * 2, rect.top, br * 2, br * 2, 270, 90);
+            btnPath.AddArc(rect.right - br * 2, rect.bottom - br * 2, br * 2, br * 2, 0, 90);
+            btnPath.AddArc(rect.left, rect.bottom - br * 2, br * 2, br * 2, 90, 90);
             btnPath.CloseFigure();
             graphics.FillPath(&btnBrush, &btnPath);
 
-            Gdiplus::RectF btnRect((float)r.left, (float)r.top, (float)(r.right - r.left), (float)(r.bottom - r.top));
-            graphics.DrawString(g_notifButtons[i].icon, -1, &iconFont, btnRect, &centerFormat, &textBrush);
+            Gdiplus::Pen btnBorder(Gdiplus::Color(100, 255, 255, 255), 1.0f);
+            graphics.DrawPath(&btnBorder, &btnPath);
+
+            Gdiplus::RectF btnRect((float)rect.left, (float)rect.top,
+                (float)(rect.right - rect.left), (float)(rect.bottom - rect.top));
+            graphics.DrawString(g_notifButtons[i].label, -1, &btnFont, btnRect, &centerFormat, &textBrush);
         }
 
         BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
@@ -858,7 +856,43 @@ LRESULT CALLBACK NotificationWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
 
     case WM_TIMER:
         if (wParam == NOTIF_TIMER_ID) {
-            HideNotification();
+            // Start slide-out animation
+            KillTimer(hwnd, NOTIF_TIMER_ID);
+            g_notifClosing = true;
+            g_notifAnimStep = 0;
+            RECT rect;
+            GetWindowRect(hwnd, &rect);
+            g_notifStartX = rect.left;
+            g_notifTargetX = GetSystemMetrics(SM_CXSCREEN) + 10;
+            SetTimer(hwnd, NOTIF_ANIM_TIMER_ID, NOTIF_ANIM_DURATION / NOTIF_ANIM_STEPS, nullptr);
+        } else if (wParam == NOTIF_ANIM_TIMER_ID) {
+            g_notifAnimStep++;
+            if (g_notifAnimStep >= NOTIF_ANIM_STEPS) {
+                // Animation complete
+                KillTimer(hwnd, NOTIF_ANIM_TIMER_ID);
+                if (g_notifClosing) {
+                    // Destroy after slide-out
+                    DestroyWindow(hwnd);
+                    g_app.notificationWnd = nullptr;
+                    if (g_app.notificationPreview) {
+                        DeleteObject(g_app.notificationPreview);
+                        g_app.notificationPreview = nullptr;
+                    }
+                    g_notifClosing = false;
+                }
+            } else {
+                // Ease animation
+                float t = (float)g_notifAnimStep / NOTIF_ANIM_STEPS;
+                float ease = g_notifClosing
+                    ? t * t  // Ease-in for closing
+                    : 1.0f - (1.0f - t) * (1.0f - t);  // Ease-out for opening
+                int currentX = g_notifStartX + (int)((g_notifTargetX - g_notifStartX) * ease);
+
+                RECT rect;
+                GetWindowRect(hwnd, &rect);
+                SetWindowPos(hwnd, nullptr, currentX, rect.top, 0, 0,
+                    SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+            }
         }
         return 0;
 
@@ -878,7 +912,7 @@ void ShowNotification(const wchar_t* filepath) {
     if (g_app.notificationPreview) {
         DeleteObject(g_app.notificationPreview);
     }
-    g_app.notificationPreview = CreatePreviewBitmap(filepath, NOTIF_PREVIEW_SIZE);
+    g_app.notificationPreview = CreatePreviewBitmap(filepath, NOTIF_PREVIEW_WIDTH, NOTIF_PREVIEW_HEIGHT);
 
     // Register class if needed
     static bool registered = false;
@@ -896,40 +930,51 @@ void ShowNotification(const wchar_t* filepath) {
     // Hide existing notification if any
     if (g_app.notificationWnd) {
         KillTimer(g_app.notificationWnd, NOTIF_TIMER_ID);
+        KillTimer(g_app.notificationWnd, NOTIF_ANIM_TIMER_ID);
         DestroyWindow(g_app.notificationWnd);
+        g_app.notificationWnd = nullptr;
     }
 
     // Position at bottom-right of screen
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);
-    int x = screenWidth - NOTIF_WIDTH - 20;
+    g_notifTargetX = screenWidth - NOTIF_WIDTH - 20;
+    g_notifStartX = screenWidth + 10;  // Start off-screen to the right
     int y = screenHeight - NOTIF_HEIGHT - 60;
 
     g_app.notificationHovered = -1;
+    g_notifAnimStep = 0;
+    g_notifClosing = false;
+
     g_app.notificationWnd = CreateWindowExW(
         WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
         L"SnippingToolNotification", L"",
         WS_POPUP,
-        x, y, NOTIF_WIDTH, NOTIF_HEIGHT,
+        g_notifStartX, y, NOTIF_WIDTH, NOTIF_HEIGHT,
         nullptr, nullptr, g_app.hInstance, nullptr
     );
 
     SetLayeredWindowAttributes(g_app.notificationWnd, 0, 255, LWA_ALPHA);
     ShowWindow(g_app.notificationWnd, SW_SHOWNOACTIVATE);
 
+    // Start slide-in animation
+    SetTimer(g_app.notificationWnd, NOTIF_ANIM_TIMER_ID, NOTIF_ANIM_DURATION / NOTIF_ANIM_STEPS, nullptr);
+
     // Auto-hide timer
     SetTimer(g_app.notificationWnd, NOTIF_TIMER_ID, NOTIF_DURATION, nullptr);
 }
 
 void HideNotification() {
-    if (g_app.notificationWnd) {
+    if (g_app.notificationWnd && !g_notifClosing) {
+        // Start slide-out animation
         KillTimer(g_app.notificationWnd, NOTIF_TIMER_ID);
-        DestroyWindow(g_app.notificationWnd);
-        g_app.notificationWnd = nullptr;
-    }
-    if (g_app.notificationPreview) {
-        DeleteObject(g_app.notificationPreview);
-        g_app.notificationPreview = nullptr;
+        g_notifClosing = true;
+        g_notifAnimStep = 0;
+        RECT rect;
+        GetWindowRect(g_app.notificationWnd, &rect);
+        g_notifStartX = rect.left;
+        g_notifTargetX = GetSystemMetrics(SM_CXSCREEN) + 10;
+        SetTimer(g_app.notificationWnd, NOTIF_ANIM_TIMER_ID, NOTIF_ANIM_DURATION / NOTIF_ANIM_STEPS, nullptr);
     }
 }
 
@@ -1647,6 +1692,9 @@ void CaptureFullscreen() {
 }
 
 void StartCapture() {
+    // Hide tooltip before capture so it doesn't appear in screenshots
+    HideTooltip();
+
     switch (g_app.captureMode) {
     case MODE_RECTANGLE:
     case MODE_WINDOW:
