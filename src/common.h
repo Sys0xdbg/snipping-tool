@@ -66,6 +66,11 @@ namespace Colors {
 #define HOTKEY_FULLSCREEN 3
 #define HOTKEY_PRINTSCREEN 4
 
+// Tray icon
+#define WM_TRAYICON (WM_USER + 200)
+#define ID_TRAY_SHOW 3001
+#define ID_TRAY_EXIT 3002
+
 // UI Constants
 const int TOOLBAR_HEIGHT = 48;
 const int BUTTON_SIZE = 36;

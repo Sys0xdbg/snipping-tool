@@ -65,6 +65,10 @@ struct AppState {
 
     // GDI+ token
     ULONG_PTR gdiplusToken = 0;
+
+    // System tray
+    NOTIFYICONDATAW trayIcon = {};
+    bool trayIconAdded = false;
 };
 
 extern AppState g_app;

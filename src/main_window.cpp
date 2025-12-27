@@ -9,10 +9,48 @@
 #include "settings_dlg.h"
 #include "hotkeys.h"
 
+static void AddTrayIcon(HWND hwnd) {
+    g_app.trayIcon.cbSize = sizeof(NOTIFYICONDATAW);
+    g_app.trayIcon.hWnd = hwnd;
+    g_app.trayIcon.uID = 1;
+    g_app.trayIcon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    g_app.trayIcon.uCallbackMessage = WM_TRAYICON;
+    g_app.trayIcon.hIcon = LoadIconW(g_app.hInstance, L"APP_ICON");
+    if (!g_app.trayIcon.hIcon) {
+        g_app.trayIcon.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    }
+    wcscpy_s(g_app.trayIcon.szTip, L"Snipping Tool");
+    Shell_NotifyIconW(NIM_ADD, &g_app.trayIcon);
+    g_app.trayIconAdded = true;
+}
+
+static void RemoveTrayIcon() {
+    if (g_app.trayIconAdded) {
+        Shell_NotifyIconW(NIM_DELETE, &g_app.trayIcon);
+        g_app.trayIconAdded = false;
+    }
+}
+
+static void ShowTrayMenu(HWND hwnd) {
+    POINT pt;
+    GetCursorPos(&pt);
+
+    HMENU hMenu = CreatePopupMenu();
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_SHOW, L"Show");
+    AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(hMenu, MF_STRING, ID_TRAY_EXIT, L"Exit");
+
+    SetForegroundWindow(hwnd);
+    TrackPopupMenu(hMenu, TPM_RIGHTALIGN | TPM_BOTTOMALIGN | TPM_RIGHTBUTTON,
+        pt.x, pt.y, 0, hwnd, nullptr);
+    DestroyMenu(hMenu);
+}
+
 LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_CREATE:
         UpdateButtonRects();
+        AddTrayIcon(hwnd);
         return 0;
 
     case WM_HOTKEY:
@@ -236,7 +274,37 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
     case WM_ERASEBKGND:
         return 1;
 
+    case WM_CLOSE:
+        // Minimize to tray instead of closing
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+
+    case WM_TRAYICON:
+        if (lParam == WM_LBUTTONUP || lParam == WM_LBUTTONDBLCLK) {
+            // Show window on left click or double click
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
+        } else if (lParam == WM_RBUTTONUP) {
+            // Show context menu on right click
+            ShowTrayMenu(hwnd);
+        }
+        return 0;
+
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case ID_TRAY_SHOW:
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
+            break;
+        case ID_TRAY_EXIT:
+            RemoveTrayIcon();
+            DestroyWindow(hwnd);
+            break;
+        }
+        return 0;
+
     case WM_DESTROY:
+        RemoveTrayIcon();
         UnregisterHotKey(hwnd, HOTKEY_RECTANGLE);
         UnregisterHotKey(hwnd, HOTKEY_WINDOW);
         UnregisterHotKey(hwnd, HOTKEY_FULLSCREEN);
