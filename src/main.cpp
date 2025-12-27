@@ -110,6 +110,7 @@ struct AppState {
     HWND mainWnd = nullptr;
     HWND overlayWnd = nullptr;
     HWND modePickerWnd = nullptr;
+    HWND tooltipWnd = nullptr;
     HINSTANCE hInstance = nullptr;
 
     // Low-level keyboard hook for intercepting Win+Shift+S
@@ -122,6 +123,7 @@ struct AppState {
     CaptureMode captureMode = MODE_RECTANGLE;
     int delaySeconds = 0;
     int hoveredButton = -1;
+    int lastTooltipButton = -1;
 
     // Selection state
     bool isSelecting = false;
@@ -161,6 +163,7 @@ struct AppState {
 struct ToolbarButton {
     int id;
     const wchar_t* tooltip;
+    const wchar_t* description;
     RECT rect;
     bool isToggle;
     bool isActive;
@@ -176,20 +179,20 @@ enum ButtonID {
 };
 
 ToolbarButton g_buttons[] = {
-    { BTN_NEW, L"New", {}, false, false },
-    { BTN_MODE_RECT, L"Rectangle", {}, true, true },
-    { BTN_MODE_WINDOW, L"Window", {}, true, false },
-    { BTN_MODE_FULLSCREEN, L"Fullscreen", {}, true, false },
-    { BTN_DELAY, L"Delay", {}, false, false },
-    { BTN_SETTINGS, L"Settings", {}, false, false },
+    { BTN_NEW, L"New", L"Start a new screenshot capture", {}, false, false },
+    { BTN_MODE_RECT, L"Rectangle", L"Draw a rectangle to capture a region", {}, true, true },
+    { BTN_MODE_WINDOW, L"Window", L"Click a window to capture it", {}, true, false },
+    { BTN_MODE_FULLSCREEN, L"Fullscreen", L"Capture the entire screen", {}, true, false },
+    { BTN_DELAY, L"Delay", L"Set a timer before capture starts", {}, false, false },
+    { BTN_SETTINGS, L"Settings", L"Configure hotkeys and preferences", {}, false, false },
 };
 
 const int NUM_BUTTONS = sizeof(g_buttons) / sizeof(g_buttons[0]);
-const int TOOLBAR_HEIGHT = 56;
+const int TOOLBAR_HEIGHT = 48;
 const int BUTTON_SIZE = 36;
 const int BUTTON_MARGIN = 6;
 const int WINDOW_WIDTH = 420;
-const int WINDOW_HEIGHT = 64;
+const int WINDOW_HEIGHT = 56;
 
 //------------------------------------------------------------------------------
 // Settings Management
@@ -800,6 +803,118 @@ void UpdateButtonRects() {
 }
 
 //------------------------------------------------------------------------------
+// Tooltip Window
+//------------------------------------------------------------------------------
+LRESULT CALLBACK TooltipWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC hdc = BeginPaint(hwnd, &ps);
+
+        RECT clientRect;
+        GetClientRect(hwnd, &clientRect);
+
+        // Get the tooltip text from window property
+        const wchar_t* text = (const wchar_t*)GetPropW(hwnd, L"TooltipText");
+        if (text) {
+            Gdiplus::Graphics graphics(hdc);
+            graphics.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
+
+            // Dark background with rounded corners
+            Gdiplus::SolidBrush bgBrush(Gdiplus::Color(240, 45, 45, 45));
+            Gdiplus::GraphicsPath path;
+            int r = 6;
+            path.AddArc(0, 0, r * 2, r * 2, 180, 90);
+            path.AddArc(clientRect.right - r * 2, 0, r * 2, r * 2, 270, 90);
+            path.AddArc(clientRect.right - r * 2, clientRect.bottom - r * 2, r * 2, r * 2, 0, 90);
+            path.AddArc(0, clientRect.bottom - r * 2, r * 2, r * 2, 90, 90);
+            path.CloseFigure();
+            graphics.FillPath(&bgBrush, &path);
+
+            // Border
+            Gdiplus::Pen borderPen(Gdiplus::Color(255, 70, 70, 70), 1.0f);
+            graphics.DrawPath(&borderPen, &path);
+
+            // Text
+            Gdiplus::FontFamily fontFamily(L"Segoe UI");
+            Gdiplus::Font font(&fontFamily, 11, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+            Gdiplus::SolidBrush textBrush(Gdiplus::Color(255, 220, 220, 220));
+            Gdiplus::StringFormat format;
+            format.SetAlignment(Gdiplus::StringAlignmentCenter);
+            format.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+            Gdiplus::RectF textRect(0, 0, (float)clientRect.right, (float)clientRect.bottom);
+            graphics.DrawString(text, -1, &font, textRect, &format, &textBrush);
+        }
+
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND:
+        return 1;
+    default:
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+}
+
+void ShowTooltip(const wchar_t* text, int x, int y) {
+    // Register class if needed
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc = {};
+        wc.cbSize = sizeof(wc);
+        wc.lpfnWndProc = TooltipWndProc;
+        wc.hInstance = g_app.hInstance;
+        wc.lpszClassName = L"SnippingToolTooltip";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+
+    // Measure text to size the tooltip
+    HDC hdc = GetDC(nullptr);
+    Gdiplus::Graphics graphics(hdc);
+    Gdiplus::FontFamily fontFamily(L"Segoe UI");
+    Gdiplus::Font font(&fontFamily, 11, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+    Gdiplus::RectF bounds;
+    graphics.MeasureString(text, -1, &font, Gdiplus::PointF(0, 0), &bounds);
+    ReleaseDC(nullptr, hdc);
+
+    int width = (int)bounds.Width + 16;
+    int height = 24;
+
+    // Destroy existing tooltip
+    if (g_app.tooltipWnd) {
+        RemovePropW(g_app.tooltipWnd, L"TooltipText");
+        DestroyWindow(g_app.tooltipWnd);
+    }
+
+    g_app.tooltipWnd = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+        L"SnippingToolTooltip", L"",
+        WS_POPUP,
+        x - width / 2, y, width, height,
+        nullptr, nullptr, g_app.hInstance, nullptr
+    );
+
+    SetLayeredWindowAttributes(g_app.tooltipWnd, 0, 255, LWA_ALPHA);
+    SetPropW(g_app.tooltipWnd, L"TooltipText", (HANDLE)text);
+
+    HRGN rgn = CreateRoundRectRgn(0, 0, width + 1, height + 1, 6, 6);
+    SetWindowRgn(g_app.tooltipWnd, rgn, TRUE);
+
+    ShowWindow(g_app.tooltipWnd, SW_SHOWNOACTIVATE);
+}
+
+void HideTooltip() {
+    if (g_app.tooltipWnd) {
+        RemovePropW(g_app.tooltipWnd, L"TooltipText");
+        DestroyWindow(g_app.tooltipWnd);
+        g_app.tooltipWnd = nullptr;
+    }
+    g_app.lastTooltipButton = -1;
+}
+
+//------------------------------------------------------------------------------
 // Overlay Window (for region selection)
 //------------------------------------------------------------------------------
 HBITMAP CaptureScreenToBitmap() {
@@ -1119,21 +1234,22 @@ void ShowDelayMenu(HWND hwnd) {
 // Mode Picker Overlay (shown when Print Screen is pressed)
 //------------------------------------------------------------------------------
 const int MODE_PICKER_WIDTH = 280;
-const int MODE_PICKER_HEIGHT = 56;
-const int MODE_PICKER_BTN_SIZE = 44;
+const int MODE_PICKER_HEIGHT = 80;
+const int MODE_PICKER_BTN_SIZE = 40;
 
 struct ModePickerBtn {
     int mode;
     const wchar_t* icon;
-    const wchar_t* tooltip;
+    const wchar_t* name;
+    const wchar_t* description;
     RECT rect;
 };
 
 ModePickerBtn g_modePickerBtns[] = {
-    { MODE_RECTANGLE, L"\u25AD", L"Rectangle", {} },
-    { MODE_WINDOW, L"\u2750", L"Window", {} },
-    { MODE_FULLSCREEN, L"\u2B1C", L"Fullscreen", {} },
-    { -1, L"\u2715", L"Close", {} },
+    { MODE_RECTANGLE, L"\u25AD", L"Rectangle", L"Draw a rectangle to capture a region", {} },
+    { MODE_WINDOW, L"\u2750", L"Window", L"Click a window to capture it", {} },
+    { MODE_FULLSCREEN, L"\u2B1C", L"Fullscreen", L"Capture the entire screen", {} },
+    { -1, L"\u2715", L"Close", L"Cancel screenshot", {} },
 };
 
 void ShowModePicker();
@@ -1172,43 +1288,57 @@ LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         Gdiplus::Pen borderPen(Gdiplus::Color(255, 60, 60, 60), 1.0f);
         graphics.DrawPath(&borderPen, &bgPath);
 
+        // Set up GDI+ text rendering
+        graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
+
+        Gdiplus::FontFamily fontFamily(L"Segoe UI Symbol");
+        Gdiplus::Font iconFont(&fontFamily, 14, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+        Gdiplus::FontFamily textFamily(L"Segoe UI");
+        Gdiplus::Font descFont(&textFamily, 11, Gdiplus::FontStyleRegular, Gdiplus::UnitPixel);
+
+        Gdiplus::StringFormat centerFormat;
+        centerFormat.SetAlignment(Gdiplus::StringAlignmentCenter);
+        centerFormat.SetLineAlignment(Gdiplus::StringAlignmentCenter);
+
         // Draw buttons
         int x = 16;
-        int y = (MODE_PICKER_HEIGHT - MODE_PICKER_BTN_SIZE) / 2;
+        int btnY = 10;
 
         for (int i = 0; i < 4; i++) {
-            g_modePickerBtns[i].rect = { x, y, x + MODE_PICKER_BTN_SIZE, y + MODE_PICKER_BTN_SIZE };
+            g_modePickerBtns[i].rect = { x, btnY, x + MODE_PICKER_BTN_SIZE, btnY + MODE_PICKER_BTN_SIZE };
 
             bool isHovered = (g_app.modePickerHovered == i);
 
             // Button background
             if (isHovered) {
                 Gdiplus::SolidBrush hoverBrush(Gdiplus::Color(255, 70, 70, 70));
-                graphics.FillEllipse(&hoverBrush, x + 2, y + 2, MODE_PICKER_BTN_SIZE - 4, MODE_PICKER_BTN_SIZE - 4);
+                graphics.FillEllipse(&hoverBrush, (float)(x + 2), (float)(btnY + 2),
+                    (float)(MODE_PICKER_BTN_SIZE - 4), (float)(MODE_PICKER_BTN_SIZE - 4));
             }
 
-            // Draw icon
-            HFONT iconFont = CreateFontW(20, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI Symbol");
-            HFONT oldFont = (HFONT)SelectObject(hdc, iconFont);
-            SetBkMode(hdc, TRANSPARENT);
-            SetTextColor(hdc, i == 3 ? RGB(200, 200, 200) : RGB(255, 255, 255));
-
-            RECT iconRect = g_modePickerBtns[i].rect;
-            DrawTextW(hdc, g_modePickerBtns[i].icon, -1, &iconRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-
-            SelectObject(hdc, oldFont);
-            DeleteObject(iconFont);
+            // Draw icon with GDI+
+            Gdiplus::SolidBrush iconBrush(i == 3 ? Gdiplus::Color(255, 200, 200, 200) : Gdiplus::Color(255, 255, 255, 255));
+            Gdiplus::RectF iconRect((float)x, (float)btnY, (float)MODE_PICKER_BTN_SIZE, (float)MODE_PICKER_BTN_SIZE);
+            graphics.DrawString(g_modePickerBtns[i].icon, -1, &iconFont, iconRect, &centerFormat, &iconBrush);
 
             // Add divider before close button
             if (i == 2) {
                 Gdiplus::Pen divPen(Gdiplus::Color(255, 80, 80, 80), 1.0f);
-                graphics.DrawLine(&divPen, x + MODE_PICKER_BTN_SIZE + 10, y + 8, x + MODE_PICKER_BTN_SIZE + 10, y + MODE_PICKER_BTN_SIZE - 8);
+                graphics.DrawLine(&divPen, x + MODE_PICKER_BTN_SIZE + 10, btnY + 8,
+                    x + MODE_PICKER_BTN_SIZE + 10, btnY + MODE_PICKER_BTN_SIZE - 8);
                 x += 20;
             }
 
             x += MODE_PICKER_BTN_SIZE + 8;
+        }
+
+        // Draw description text when hovering
+        if (g_app.modePickerHovered >= 0 && g_app.modePickerHovered < 4) {
+            Gdiplus::SolidBrush descBrush(Gdiplus::Color(255, 180, 180, 180));
+            Gdiplus::RectF descRect(8.0f, (float)(btnY + MODE_PICKER_BTN_SIZE + 4),
+                (float)(clientRect.right - 16), 20.0f);
+            graphics.DrawString(g_modePickerBtns[g_app.modePickerHovered].description, -1,
+                &descFont, descRect, &centerFormat, &descBrush);
         }
 
         // Copy to screen
@@ -1385,6 +1515,27 @@ void DrawToggleSwitch(HDC hdc, int x, int y, bool isOn, bool isHovered) {
     float knobY = (float)y + (height - knobSize) / 2.0f;
     Gdiplus::SolidBrush knobBrush(knobColor);
     graphics.FillEllipse(&knobBrush, knobX, knobY, (float)knobSize, (float)knobSize);
+}
+
+// Helper function to draw text with GDI+ for smooth rendering
+void DrawTextGdiPlus(HDC hdc, const wchar_t* text, const RECT& rect, COLORREF color,
+                     float fontSize = 12.0f, bool bold = false, bool center = false) {
+    Gdiplus::Graphics graphics(hdc);
+    graphics.SetTextRenderingHint(Gdiplus::TextRenderingHintClearTypeGridFit);
+
+    Gdiplus::FontFamily fontFamily(L"Segoe UI");
+    Gdiplus::Font font(&fontFamily, fontSize, bold ? Gdiplus::FontStyleBold : Gdiplus::FontStyleRegular,
+                       Gdiplus::UnitPixel);
+
+    Gdiplus::StringFormat format;
+    format.SetAlignment(center ? Gdiplus::StringAlignmentCenter : Gdiplus::StringAlignmentNear);
+    format.SetLineAlignment(Gdiplus::StringAlignmentNear);
+
+    Gdiplus::SolidBrush brush(Gdiplus::Color(255, GetRValue(color), GetGValue(color), GetBValue(color)));
+    Gdiplus::RectF rectF((float)rect.left, (float)rect.top,
+                         (float)(rect.right - rect.left), (float)(rect.bottom - rect.top));
+
+    graphics.DrawString(text, -1, &font, rectF, &format, &brush);
 }
 
 // Draw a settings card/section
@@ -1685,29 +1836,17 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         FillRect(hdc, &clientRect, bgBrush);
         DeleteObject(bgBrush);
 
-        SetBkMode(hdc, TRANSPARENT);
-        HFONT oldFont = (HFONT)SelectObject(hdc, g_app.fontRegular);
-
         int y = SETTINGS_PADDING;
         int contentWidth = SETTINGS_WIDTH - SETTINGS_PADDING * 2;
 
         // Title
-        SetTextColor(hdc, Colors::Text);
         RECT titleRect = { SETTINGS_PADDING, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 30 };
-        HFONT titleFont = CreateFontW(20, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
-            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-            CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI");
-        SelectObject(hdc, titleFont);
-        DrawTextW(hdc, L"Settings", -1, &titleRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        DeleteObject(titleFont);
+        DrawTextGdiPlus(hdc, L"Settings", titleRect, Colors::Text, 18.0f, true);
         y += 40;
 
-        SelectObject(hdc, g_app.fontSmall);
-
         // Save Path section
-        SetTextColor(hdc, Colors::TextSecondary);
         RECT pathLabel = { SETTINGS_PADDING, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 20 };
-        DrawTextW(hdc, L"Screenshot save location", -1, &pathLabel, DT_LEFT | DT_SINGLELINE);
+        DrawTextGdiPlus(hdc, L"Screenshot save location", pathLabel, Colors::TextSecondary, 12.0f);
         y += 24;
 
         // Path edit background (drawn behind the actual edit control)
@@ -1721,29 +1860,24 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
         // Auto-save toggle row
         DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        SetTextColor(hdc, Colors::Text);
         RECT autoLabel = { SETTINGS_PADDING + 12, y + 8, SETTINGS_WIDTH - 80, y + 26 };
-        DrawTextW(hdc, L"Auto-save screenshots", -1, &autoLabel, DT_LEFT | DT_SINGLELINE);
-        SetTextColor(hdc, Colors::TextSecondary);
+        DrawTextGdiPlus(hdc, L"Auto-save screenshots", autoLabel, Colors::Text, 13.0f);
         RECT autoDesc = { SETTINGS_PADDING + 12, y + 26, SETTINGS_WIDTH - 80, y + 42 };
-        DrawTextW(hdc, L"Skip the save dialog", -1, &autoDesc, DT_LEFT | DT_SINGLELINE);
+        DrawTextGdiPlus(hdc, L"Skip the save dialog", autoDesc, Colors::TextSecondary, 11.0f);
         DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempAutoSave, g_hoveredToggle == TOGGLE_AUTOSAVE);
         y += SETTINGS_ROW_HEIGHT + 12;
 
         // Hotkeys section header
-        SetTextColor(hdc, Colors::TextSecondary);
         RECT hkHeader = { SETTINGS_PADDING, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 20 };
-        DrawTextW(hdc, L"Keyboard shortcuts", -1, &hkHeader, DT_LEFT | DT_SINGLELINE);
+        DrawTextGdiPlus(hdc, L"Keyboard shortcuts", hkHeader, Colors::TextSecondary, 12.0f);
         y += 28;
 
         // Rectangle hotkey
         DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        SetTextColor(hdc, Colors::Text);
         RECT rectLabel = { SETTINGS_PADDING + 12, y + 6, 140, y + 24 };
-        DrawTextW(hdc, L"Rectangle", -1, &rectLabel, DT_LEFT | DT_SINGLELINE);
-        SetTextColor(hdc, Colors::TextSecondary);
+        DrawTextGdiPlus(hdc, L"Rectangle", rectLabel, Colors::Text, 13.0f);
         RECT rectHk = { SETTINGS_PADDING + 12, y + 24, 200, y + 42 };
-        DrawTextW(hdc, g_tempHotkeyRect.GetString().c_str(), -1, &rectHk, DT_LEFT | DT_SINGLELINE);
+        DrawTextGdiPlus(hdc, g_tempHotkeyRect.GetString().c_str(), rectHk, Colors::TextSecondary, 11.0f);
         g_settingsBtns[1].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 115, y + 10, SETTINGS_WIDTH - SETTINGS_PADDING - 60, y + 38 };
         DrawSettingsButton(hdc, g_settingsBtns[1].rect, g_app.recordingHotkeyType == 1 ? L"..." : L"Record", false, g_hoveredBtn == BTN_RECORD_RECT);
         DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempRectEnabled, g_hoveredToggle == TOGGLE_RECT_ENABLED);
@@ -1751,12 +1885,10 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
         // Window hotkey
         DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        SetTextColor(hdc, Colors::Text);
         RECT winLabel = { SETTINGS_PADDING + 12, y + 6, 140, y + 24 };
-        DrawTextW(hdc, L"Window", -1, &winLabel, DT_LEFT | DT_SINGLELINE);
-        SetTextColor(hdc, Colors::TextSecondary);
+        DrawTextGdiPlus(hdc, L"Window", winLabel, Colors::Text, 13.0f);
         RECT winHk = { SETTINGS_PADDING + 12, y + 24, 200, y + 42 };
-        DrawTextW(hdc, g_tempHotkeyWindow.GetString().c_str(), -1, &winHk, DT_LEFT | DT_SINGLELINE);
+        DrawTextGdiPlus(hdc, g_tempHotkeyWindow.GetString().c_str(), winHk, Colors::TextSecondary, 11.0f);
         g_settingsBtns[2].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 115, y + 10, SETTINGS_WIDTH - SETTINGS_PADDING - 60, y + 38 };
         DrawSettingsButton(hdc, g_settingsBtns[2].rect, g_app.recordingHotkeyType == 2 ? L"..." : L"Record", false, g_hoveredBtn == BTN_RECORD_WIN);
         DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempWinEnabled, g_hoveredToggle == TOGGLE_WIN_ENABLED);
@@ -1764,42 +1896,35 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
         // Fullscreen hotkey
         DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        SetTextColor(hdc, Colors::Text);
         RECT fullLabel = { SETTINGS_PADDING + 12, y + 6, 140, y + 24 };
-        DrawTextW(hdc, L"Fullscreen", -1, &fullLabel, DT_LEFT | DT_SINGLELINE);
-        SetTextColor(hdc, Colors::TextSecondary);
+        DrawTextGdiPlus(hdc, L"Fullscreen", fullLabel, Colors::Text, 13.0f);
         RECT fullHk = { SETTINGS_PADDING + 12, y + 24, 200, y + 42 };
-        DrawTextW(hdc, g_tempHotkeyFullscreen.GetString().c_str(), -1, &fullHk, DT_LEFT | DT_SINGLELINE);
+        DrawTextGdiPlus(hdc, g_tempHotkeyFullscreen.GetString().c_str(), fullHk, Colors::TextSecondary, 11.0f);
         g_settingsBtns[3].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 115, y + 10, SETTINGS_WIDTH - SETTINGS_PADDING - 60, y + 38 };
         DrawSettingsButton(hdc, g_settingsBtns[3].rect, g_app.recordingHotkeyType == 3 ? L"..." : L"Record", false, g_hoveredBtn == BTN_RECORD_FULL);
         DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempFullEnabled, g_hoveredToggle == TOGGLE_FULL_ENABLED);
         y += SETTINGS_ROW_HEIGHT + 12;
 
         // System section header
-        SetTextColor(hdc, Colors::TextSecondary);
         RECT sysHeader = { SETTINGS_PADDING, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 20 };
-        DrawTextW(hdc, L"System", -1, &sysHeader, DT_LEFT | DT_SINGLELINE);
+        DrawTextGdiPlus(hdc, L"System", sysHeader, Colors::TextSecondary, 12.0f);
         y += 28;
 
         // Replace Windows Snipping Tool
         DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        SetTextColor(hdc, Colors::Text);
         RECT replLabel = { SETTINGS_PADDING + 12, y + 8, SETTINGS_WIDTH - 80, y + 26 };
-        DrawTextW(hdc, L"Replace Windows Snipping Tool", -1, &replLabel, DT_LEFT | DT_SINGLELINE);
-        SetTextColor(hdc, Colors::TextSecondary);
+        DrawTextGdiPlus(hdc, L"Replace Windows Snipping Tool", replLabel, Colors::Text, 13.0f);
         RECT replDesc = { SETTINGS_PADDING + 12, y + 26, SETTINGS_WIDTH - 80, y + 42 };
-        DrawTextW(hdc, L"Capture Win+Shift+S", -1, &replDesc, DT_LEFT | DT_SINGLELINE);
+        DrawTextGdiPlus(hdc, L"Capture Win+Shift+S", replDesc, Colors::TextSecondary, 11.0f);
         DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempReplaceWin, g_hoveredToggle == TOGGLE_REPLACE_WIN);
         y += SETTINGS_ROW_HEIGHT + 4;
 
         // Run at startup
         DrawSettingsCard(hdc, SETTINGS_PADDING, y, contentWidth, SETTINGS_ROW_HEIGHT);
-        SetTextColor(hdc, Colors::Text);
         RECT startLabel = { SETTINGS_PADDING + 12, y + 8, SETTINGS_WIDTH - 80, y + 26 };
-        DrawTextW(hdc, L"Start with Windows", -1, &startLabel, DT_LEFT | DT_SINGLELINE);
-        SetTextColor(hdc, Colors::TextSecondary);
+        DrawTextGdiPlus(hdc, L"Start with Windows", startLabel, Colors::Text, 13.0f);
         RECT startDesc = { SETTINGS_PADDING + 12, y + 26, SETTINGS_WIDTH - 80, y + 42 };
-        DrawTextW(hdc, L"Launch automatically", -1, &startDesc, DT_LEFT | DT_SINGLELINE);
+        DrawTextGdiPlus(hdc, L"Launch automatically", startDesc, Colors::TextSecondary, 11.0f);
         DrawToggleSwitch(hdc, SETTINGS_WIDTH - SETTINGS_PADDING - 52, y + 14, g_tempStartup, g_hoveredToggle == TOGGLE_STARTUP);
         y += SETTINGS_ROW_HEIGHT + 20;
 
@@ -1808,8 +1933,6 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         g_settingsBtns[5].rect = { SETTINGS_WIDTH - SETTINGS_PADDING - 70, y, SETTINGS_WIDTH - SETTINGS_PADDING, y + 32 };
         DrawSettingsButton(hdc, g_settingsBtns[4].rect, L"Save", true, g_hoveredBtn == BTN_SAVE_SETTINGS);
         DrawSettingsButton(hdc, g_settingsBtns[5].rect, L"Cancel", false, g_hoveredBtn == BTN_CANCEL_SETTINGS);
-
-        SelectObject(hdc, oldFont);
 
         // Copy buffer to screen
         BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
@@ -2118,10 +2241,15 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_PAINT: {
         PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
+        HDC hdcScreen = BeginPaint(hwnd, &ps);
 
         RECT clientRect;
         GetClientRect(hwnd, &clientRect);
+
+        // Double buffering
+        HDC hdc = CreateCompatibleDC(hdcScreen);
+        HBITMAP hBitmap = CreateCompatibleBitmap(hdcScreen, clientRect.right, clientRect.bottom);
+        HBITMAP hOldBitmap = (HBITMAP)SelectObject(hdc, hBitmap);
 
         // Background
         HBRUSH bgBrush = CreateSolidBrush(Colors::Background);
@@ -2157,6 +2285,13 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         DrawTextW(hdc, L"+ New", -1, &newRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         SelectObject(hdc, oldFont);
 
+        // Copy to screen
+        BitBlt(hdcScreen, 0, 0, clientRect.right, clientRect.bottom, hdc, 0, 0, SRCCOPY);
+
+        SelectObject(hdc, hOldBitmap);
+        DeleteObject(hBitmap);
+        DeleteDC(hdc);
+
         EndPaint(hwnd, &ps);
         return 0;
     }
@@ -2166,17 +2301,30 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         int y = GET_Y_LPARAM(lParam);
 
         int newHovered = -1;
+        int hoveredIndex = -1;
         for (int i = 0; i < NUM_BUTTONS; i++) {
             POINT pt = { x, y };
             if (PtInRect(&g_buttons[i].rect, pt)) {
                 newHovered = g_buttons[i].id;
+                hoveredIndex = i;
                 break;
             }
         }
 
         if (newHovered != g_app.hoveredButton) {
             g_app.hoveredButton = newHovered;
-            InvalidateRect(hwnd, nullptr, TRUE);
+            InvalidateRect(hwnd, nullptr, FALSE);
+
+            // Show/hide tooltip
+            if (newHovered >= 0 && hoveredIndex >= 0 && g_buttons[hoveredIndex].description) {
+                RECT btnRect = g_buttons[hoveredIndex].rect;
+                POINT screenPt = { (btnRect.left + btnRect.right) / 2, btnRect.bottom + 8 };
+                ClientToScreen(hwnd, &screenPt);
+                ShowTooltip(g_buttons[hoveredIndex].description, screenPt.x, screenPt.y);
+                g_app.lastTooltipButton = newHovered;
+            } else {
+                HideTooltip();
+            }
         }
 
         TRACKMOUSEEVENT tme = { sizeof(tme), TME_LEAVE, hwnd, 0 };
@@ -2186,7 +2334,8 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
 
     case WM_MOUSELEAVE:
         g_app.hoveredButton = -1;
-        InvalidateRect(hwnd, nullptr, TRUE);
+        HideTooltip();
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
 
     case WM_LBUTTONDOWN: {
