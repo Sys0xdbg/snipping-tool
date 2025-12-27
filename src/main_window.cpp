@@ -74,6 +74,10 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         case HOTKEY_PRINTSCREEN:
             ShowModePicker();
             break;
+        case HOTKEY_TEXT:
+            g_app.captureMode = MODE_TEXT;
+            ShowOverlay();
+            break;
         }
         return 0;
 

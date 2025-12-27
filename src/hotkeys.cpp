@@ -69,6 +69,7 @@ void RegisterHotkeys() {
     UnregisterHotKey(g_app.mainWnd, HOTKEY_WINDOW);
     UnregisterHotKey(g_app.mainWnd, HOTKEY_FULLSCREEN);
     UnregisterHotKey(g_app.mainWnd, HOTKEY_PRINTSCREEN);
+    UnregisterHotKey(g_app.mainWnd, HOTKEY_TEXT);
 
     // Print Screen hotkey - always enabled
     RegisterHotKey(g_app.mainWnd, HOTKEY_PRINTSCREEN, MOD_NOREPEAT, VK_SNAPSHOT);
@@ -102,6 +103,15 @@ void RegisterHotkeys() {
             g_app.settings.hotkeyFullscreen.vk);
         if (!result) {
             MessageBoxW(nullptr, L"Failed to register Fullscreen hotkey.\nIt may already be in use by another application.",
+                L"Hotkey Registration Failed", MB_ICONWARNING);
+        }
+    }
+    if (g_app.settings.hotkeyText.enabled && g_app.settings.hotkeyText.vk != 0) {
+        BOOL result = RegisterHotKey(g_app.mainWnd, HOTKEY_TEXT,
+            g_app.settings.hotkeyText.modifiers | MOD_NOREPEAT,
+            g_app.settings.hotkeyText.vk);
+        if (!result) {
+            MessageBoxW(nullptr, L"Failed to register Text/OCR hotkey.\nIt may already be in use by another application.",
                 L"Hotkey Registration Failed", MB_ICONWARNING);
         }
     }

@@ -39,6 +39,10 @@ void SaveSettings() {
         file << L"HotkeyFullMod=" << g_app.settings.hotkeyFullscreen.modifiers << L"\n";
         file << L"HotkeyFullVK=" << g_app.settings.hotkeyFullscreen.vk << L"\n";
         file << L"HotkeyFullEnabled=" << (g_app.settings.hotkeyFullscreen.enabled ? L"1" : L"0") << L"\n";
+        // Text/OCR hotkey
+        file << L"HotkeyTextMod=" << g_app.settings.hotkeyText.modifiers << L"\n";
+        file << L"HotkeyTextVK=" << g_app.settings.hotkeyText.vk << L"\n";
+        file << L"HotkeyTextEnabled=" << (g_app.settings.hotkeyText.enabled ? L"1" : L"0") << L"\n";
         file << L"ReplaceWindowsSnipping=" << (g_app.settings.replaceWindowsSnipping ? L"1" : L"0") << L"\n";
         file << L"RunAtStartup=" << (g_app.settings.runAtStartup ? L"1" : L"0") << L"\n";
         file.close();
@@ -80,6 +84,12 @@ void LoadSettings() {
                     g_app.settings.hotkeyFullscreen.vk = std::stoi(value);
                 } else if (key == L"HotkeyFullEnabled") {
                     g_app.settings.hotkeyFullscreen.enabled = (value == L"1");
+                } else if (key == L"HotkeyTextMod") {
+                    g_app.settings.hotkeyText.modifiers = std::stoi(value);
+                } else if (key == L"HotkeyTextVK") {
+                    g_app.settings.hotkeyText.vk = std::stoi(value);
+                } else if (key == L"HotkeyTextEnabled") {
+                    g_app.settings.hotkeyText.enabled = (value == L"1");
                 } else if (key == L"ReplaceWindowsSnipping") {
                     g_app.settings.replaceWindowsSnipping = (value == L"1");
                 } else if (key == L"RunAtStartup") {

@@ -65,6 +65,7 @@ namespace Colors {
 #define HOTKEY_WINDOW     2
 #define HOTKEY_FULLSCREEN 3
 #define HOTKEY_PRINTSCREEN 4
+#define HOTKEY_TEXT 5
 
 // Tray icon
 #define WM_TRAYICON (WM_USER + 200)
@@ -112,6 +113,7 @@ struct Settings {
     HotkeyConfig hotkeyRect = { MOD_CONTROL | MOD_SHIFT, 'S', true };
     HotkeyConfig hotkeyWindow = { MOD_CONTROL | MOD_SHIFT, 'W', false };
     HotkeyConfig hotkeyFullscreen = { MOD_CONTROL | MOD_SHIFT, 'F', false };
+    HotkeyConfig hotkeyText = { MOD_CONTROL | MOD_SHIFT, 'T', false };
     bool replaceWindowsSnipping = false;
     bool runAtStartup = false;
 };

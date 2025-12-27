@@ -15,12 +15,15 @@
 #define IDC_HOTKEY_FULL_EDIT    130
 #define IDC_HOTKEY_FULL_RECORD  131
 #define IDC_HOTKEY_FULL_ENABLED 132
+#define IDC_HOTKEY_TEXT_EDIT    135
+#define IDC_HOTKEY_TEXT_RECORD  136
+#define IDC_HOTKEY_TEXT_ENABLED 137
 #define IDC_REPLACE_WINDOWS     140
 #define IDC_RUN_STARTUP         141
 
 // Settings window dimensions
 const int SETTINGS_WIDTH = 420;
-const int SETTINGS_HEIGHT = 640;
+const int SETTINGS_HEIGHT = 700;
 const int SETTINGS_PADDING = 24;
 const int SETTINGS_ROW_HEIGHT = 52;
 
@@ -29,8 +32,9 @@ const int SETTINGS_ROW_HEIGHT = 52;
 #define TOGGLE_RECT_ENABLED    2
 #define TOGGLE_WIN_ENABLED     3
 #define TOGGLE_FULL_ENABLED    4
-#define TOGGLE_REPLACE_WIN     5
-#define TOGGLE_STARTUP         6
+#define TOGGLE_TEXT_ENABLED    5
+#define TOGGLE_REPLACE_WIN     6
+#define TOGGLE_STARTUP         7
 
 // Button IDs
 #define BTN_SAVE_SETTINGS      201
@@ -39,6 +43,7 @@ const int SETTINGS_ROW_HEIGHT = 52;
 #define BTN_RECORD_RECT        204
 #define BTN_RECORD_WIN         205
 #define BTN_RECORD_FULL        206
+#define BTN_RECORD_TEXT        207
 
 struct SettingsState {
     HWND hwnd = nullptr;
@@ -68,10 +73,12 @@ extern SettingsState g_settings;
 extern HotkeyConfig g_tempHotkeyRect;
 extern HotkeyConfig g_tempHotkeyWindow;
 extern HotkeyConfig g_tempHotkeyFullscreen;
+extern HotkeyConfig g_tempHotkeyText;
 extern bool g_tempAutoSave;
 extern bool g_tempRectEnabled;
 extern bool g_tempWinEnabled;
 extern bool g_tempFullEnabled;
+extern bool g_tempTextEnabled;
 extern bool g_tempReplaceWin;
 extern bool g_tempStartup;
 extern std::wstring g_tempSavePath;
