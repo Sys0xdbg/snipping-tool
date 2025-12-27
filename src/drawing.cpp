@@ -20,14 +20,15 @@ void DrawIcon(HDC hdc, int id, const RECT& rect, COLORREF color) {
     int cx = (rect.left + rect.right) / 2;
     int cy = (rect.top + rect.bottom) / 2;
 
-    // For mode buttons, use Unicode characters like the overlay
-    if (id == BTN_MODE_RECT || id == BTN_MODE_WINDOW || id == BTN_MODE_FULLSCREEN || id == BTN_MODE_TEXT) {
+    // For mode buttons and gallery, use Unicode characters
+    if (id == BTN_MODE_RECT || id == BTN_MODE_WINDOW || id == BTN_MODE_FULLSCREEN || id == BTN_MODE_TEXT || id == BTN_GALLERY) {
         const wchar_t* icon = nullptr;
         switch (id) {
         case BTN_MODE_RECT:       icon = L"\u25AD"; break;  // ▭
         case BTN_MODE_WINDOW:     icon = L"\u2750"; break;  // ❐
         case BTN_MODE_FULLSCREEN: icon = L"\u2B1C"; break;  // ⬜
         case BTN_MODE_TEXT:       icon = L"\u0054"; break;  // T
+        case BTN_GALLERY:         icon = L"\u25A6"; break;  // ▦ (grid)
         }
 
         if (icon) {
@@ -165,8 +166,12 @@ void UpdateButtonRects() {
 
     // Delay dropdown (index 4)
     g_buttons[4].rect = { x, y, x + 70, y + BUTTON_SIZE };
-    x += 70 + 12;
+    x += 70 + 8;
 
-    // Settings button (index 5)
+    // Gallery button (index 5)
     g_buttons[5].rect = { x, y, x + BUTTON_SIZE, y + BUTTON_SIZE };
+    x += BUTTON_SIZE + 8;
+
+    // Settings button (index 6)
+    g_buttons[6].rect = { x, y, x + BUTTON_SIZE, y + BUTTON_SIZE };
 }

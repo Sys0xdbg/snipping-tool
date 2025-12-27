@@ -23,6 +23,9 @@ add_executable(snip WIN32
     src/settings_dlg.cpp
     src/main_window.cpp
     src/ocr.cpp
+    src/gallery.cpp
+    src/editor.cpp
+    src/undo_manager.cpp
     src/resources.rc
 )
 

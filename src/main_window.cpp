@@ -8,6 +8,7 @@
 #include "mode_picker.h"
 #include "settings_dlg.h"
 #include "hotkeys.h"
+#include "gallery.h"
 
 static void AddTrayIcon(HWND hwnd) {
     g_app.trayIcon.cbSize = sizeof(NOTIFYICONDATAW);
@@ -266,6 +267,9 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
                     break;
                 case BTN_DELAY:
                     ShowDelayMenu(hwnd);
+                    break;
+                case BTN_GALLERY:
+                    ShowGallery();
                     break;
                 case BTN_SETTINGS:
                     ShowSettingsDialog(hwnd);

@@ -5,6 +5,8 @@
 #include "capture.h"
 #include "main_window.h"
 #include "overlay.h"
+#include "gallery.h"
+#include "editor.h"
 
 // Global state definition
 AppState g_app;
@@ -16,6 +18,7 @@ ToolbarButton g_buttons[] = {
     { BTN_MODE_FULLSCREEN, L"Fullscreen", L"Capture entire screen", {}, true, false },
     { BTN_MODE_TEXT, L"Text", L"Capture text from screen (OCR)", {}, true, false },
     { BTN_DELAY, L"Delay", L"Set a timer before capture starts", {}, false, false },
+    { BTN_GALLERY, L"Gallery", L"View and edit screenshots", {}, false, false },
     { BTN_SETTINGS, L"Settings", L"Configure hotkeys and preferences", {}, false, false },
 };
 
@@ -89,6 +92,25 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
     wcOverlay.hCursor = LoadCursor(nullptr, IDC_CROSS);
     wcOverlay.lpszClassName = L"SnippingToolOverlay";
     RegisterClassExW(&wcOverlay);
+
+    // Register gallery window class
+    WNDCLASSEXW wcGallery = {};
+    wcGallery.cbSize = sizeof(wcGallery);
+    wcGallery.lpfnWndProc = GalleryWndProc;
+    wcGallery.hInstance = hInstance;
+    wcGallery.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcGallery.lpszClassName = L"SnippingToolGallery";
+    wcGallery.style = CS_DBLCLKS;
+    RegisterClassExW(&wcGallery);
+
+    // Register editor window class
+    WNDCLASSEXW wcEditor = {};
+    wcEditor.cbSize = sizeof(wcEditor);
+    wcEditor.lpfnWndProc = EditorWndProc;
+    wcEditor.hInstance = hInstance;
+    wcEditor.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wcEditor.lpszClassName = L"SnippingToolEditor";
+    RegisterClassExW(&wcEditor);
 
     int screenWidth = GetSystemMetrics(SM_CXSCREEN);
     int screenHeight = GetSystemMetrics(SM_CYSCREEN);

@@ -76,8 +76,27 @@ namespace Colors {
 const int TOOLBAR_HEIGHT = 48;
 const int BUTTON_SIZE = 36;
 const int BUTTON_MARGIN = 6;
-const int WINDOW_WIDTH = 390;
+const int WINDOW_WIDTH = 430;  // Increased for gallery button
 const int WINDOW_HEIGHT = 56;
+
+// Gallery Constants
+const int GALLERY_WIDTH = 800;
+const int GALLERY_HEIGHT = 600;
+const int GALLERY_THUMB_WIDTH = 160;
+const int GALLERY_THUMB_HEIGHT = 100;
+const int GALLERY_THUMB_PADDING = 16;
+const int GALLERY_HEADER_HEIGHT = 50;
+
+// Editor Constants
+const int EDITOR_MIN_WIDTH = 900;
+const int EDITOR_MIN_HEIGHT = 650;
+const int EDITOR_TOOLBAR_HEIGHT = 50;
+const int EDITOR_TOOL_SIZE = 36;
+const int EDITOR_SIDEBAR_WIDTH = 200;
+
+// Gallery/Editor Messages
+#define WM_GALLERY_REFRESH (WM_USER + 300)
+#define WM_EDITOR_TOOL_CHANGED (WM_USER + 301)
 
 // Hotkey structure
 struct HotkeyConfig {

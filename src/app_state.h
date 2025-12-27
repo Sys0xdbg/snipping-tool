@@ -9,6 +9,8 @@ struct AppState {
     HWND modePickerWnd = nullptr;
     HWND tooltipWnd = nullptr;
     HWND notificationWnd = nullptr;
+    HWND galleryWnd = nullptr;
+    std::vector<HWND> editorWindows;
     HINSTANCE hInstance = nullptr;
 
     // Notification state
@@ -98,6 +100,7 @@ enum ButtonID {
     BTN_MODE_FULLSCREEN,
     BTN_MODE_TEXT,
     BTN_DELAY,
+    BTN_GALLERY,
     BTN_SETTINGS
 };
 
