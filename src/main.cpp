@@ -1255,6 +1255,9 @@ ModePickerBtn g_modePickerBtns[] = {
 void ShowModePicker();
 void HideModePicker();
 
+// Flag to track if we're in print screen mode (with frozen overlay)
+bool g_printScreenMode = false;
+
 LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_PAINT: {
@@ -1387,10 +1390,15 @@ LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
 
         for (int i = 0; i < 4; i++) {
             if (PtInRect(&g_modePickerBtns[i].rect, pt)) {
-                HideModePicker();
                 if (g_modePickerBtns[i].mode >= 0) {
-                    // Trigger capture with selected mode
+                    // Mode selected - just destroy picker, keep overlay
+                    // Set to nullptr BEFORE DestroyWindow to prevent WM_KILLFOCUS from interfering
+                    g_app.modePickerWnd = nullptr;
+                    DestroyWindow(hwnd);
                     PostMessageW(g_app.mainWnd, WM_USER + 101, g_modePickerBtns[i].mode, 0);
+                } else {
+                    // Close button - hide everything
+                    HideModePicker();
                 }
                 return 0;
             }
@@ -1406,7 +1414,17 @@ LRESULT CALLBACK ModePickerWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lP
         break;
 
     case WM_KILLFOCUS:
-        HideModePicker();
+        // When losing focus in print screen mode, default to rectangle selection
+        // But only if the mode picker window still exists (wasn't destroyed by a button click)
+        if (g_printScreenMode && g_app.modePickerWnd && IsWindow(g_app.modePickerWnd)) {
+            DestroyWindow(g_app.modePickerWnd);
+            g_app.modePickerWnd = nullptr;
+            PostMessageW(g_app.mainWnd, WM_USER + 101, MODE_RECTANGLE, 0);
+        } else if (!g_printScreenMode) {
+            // Only hide if not in print screen mode (user clicked away without selecting)
+            HideModePicker();
+        }
+        // If g_printScreenMode is true but window is gone, a mode was selected - do nothing
         return 0;
 
     case WM_ERASEBKGND:
@@ -1423,6 +1441,30 @@ void ShowModePicker() {
         HideModePicker();
         return;
     }
+
+    // Hide main window and capture screen
+    ShowWindow(g_app.mainWnd, SW_HIDE);
+    Sleep(150);  // Brief delay to let window hide
+
+    // Capture the screen
+    if (!CaptureScreen()) {
+        ShowWindow(g_app.mainWnd, SW_SHOW);
+        return;
+    }
+
+    // Capture screen to bitmap for overlay
+    if (g_app.overlayBitmap) {
+        DeleteObject(g_app.overlayBitmap);
+    }
+    g_app.overlayBitmap = CaptureScreenToBitmap();
+
+    // Show darkened overlay
+    int width = GetSystemMetrics(SM_CXSCREEN);
+    int height = GetSystemMetrics(SM_CYSCREEN);
+    SetWindowPos(g_app.overlayWnd, HWND_TOPMOST, 0, 0, width, height, SWP_SHOWWINDOW);
+
+    g_printScreenMode = true;
+    g_app.isSelecting = false;
 
     // Register class if needed
     static bool registered = false;
@@ -1468,6 +1510,13 @@ void HideModePicker() {
     if (g_app.modePickerWnd) {
         DestroyWindow(g_app.modePickerWnd);
         g_app.modePickerWnd = nullptr;
+    }
+
+    // If in print screen mode and no capture started, hide overlay and show main window
+    if (g_printScreenMode) {
+        g_printScreenMode = false;
+        ShowWindow(g_app.overlayWnd, SW_HIDE);
+        ShowWindow(g_app.mainWnd, SW_SHOW);
     }
 }
 
@@ -2219,15 +2268,54 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) 
         }
         return 0;
 
-    case WM_USER + 101:
+    case WM_USER + 101: {
         // Mode selected from mode picker
         g_app.captureMode = (CaptureMode)wParam;
-        if (g_app.captureMode == MODE_FULLSCREEN) {
-            CaptureFullscreen();
+
+        // Close the mode picker window but keep overlay if in print screen mode
+        if (g_app.modePickerWnd) {
+            DestroyWindow(g_app.modePickerWnd);
+            g_app.modePickerWnd = nullptr;
+        }
+
+        if (g_printScreenMode) {
+            // Already have frozen screen, just start capture
+            g_printScreenMode = false;
+            if (g_app.captureMode == MODE_FULLSCREEN) {
+                // For fullscreen, save the already captured full screen
+                ShowWindow(g_app.overlayWnd, SW_HIDE);
+
+                RECT fullscreen = { 0, 0, (LONG)g_app.screenWidth, (LONG)g_app.screenHeight };
+                std::wstring autoPath = GenerateAutoFilename();
+                wchar_t filepath[MAX_PATH];
+                wcscpy_s(filepath, autoPath.c_str());
+
+                if (g_app.settings.autoSave) {
+                    if (!SaveScreenshot(fullscreen, filepath)) {
+                        MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
+                    }
+                } else {
+                    if (ShowSaveDialog(filepath, MAX_PATH)) {
+                        if (!SaveScreenshot(fullscreen, filepath)) {
+                            MessageBoxW(g_app.mainWnd, L"Failed to save screenshot", L"Error", MB_ICONERROR);
+                        }
+                    }
+                }
+                ShowWindow(g_app.mainWnd, SW_SHOW);
+            } else {
+                // Enable selection on the overlay
+                SetForegroundWindow(g_app.overlayWnd);
+                SetCapture(g_app.overlayWnd);
+            }
         } else {
-            ShowOverlay();
+            if (g_app.captureMode == MODE_FULLSCREEN) {
+                CaptureFullscreen();
+            } else {
+                ShowOverlay();
+            }
         }
         return 0;
+    }
 
     case WM_TRIGGER_CAPTURE:
         // Triggered by low-level keyboard hook (Win+Shift+S replacement)
