@@ -17,13 +17,56 @@ void OpenImageInEditor(const std::wstring& filepath) {
     OpenEditor(filepath);
 }
 
+// Helper to load image without file locking
+static Gdiplus::Bitmap* LoadImageWithoutLock(const wchar_t* filepath) {
+    // Load file into memory first
+    HANDLE hFile = CreateFileW(filepath, GENERIC_READ, FILE_SHARE_READ, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile == INVALID_HANDLE_VALUE) return nullptr;
+
+    DWORD fileSize = GetFileSize(hFile, nullptr);
+    if (fileSize == INVALID_FILE_SIZE) {
+        CloseHandle(hFile);
+        return nullptr;
+    }
+
+    HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, fileSize);
+    if (!hMem) {
+        CloseHandle(hFile);
+        return nullptr;
+    }
+
+    void* pMem = GlobalLock(hMem);
+    DWORD bytesRead;
+    ReadFile(hFile, pMem, fileSize, &bytesRead, nullptr);
+    GlobalUnlock(hMem);
+    CloseHandle(hFile);
+
+    IStream* pStream = nullptr;
+    CreateStreamOnHGlobal(hMem, TRUE, &pStream);  // TRUE = free hMem when stream released
+
+    Gdiplus::Bitmap* temp = Gdiplus::Bitmap::FromStream(pStream);
+    if (!temp || temp->GetLastStatus() != Gdiplus::Ok) {
+        pStream->Release();
+        delete temp;
+        return nullptr;
+    }
+
+    // Clone to detach from stream
+    Gdiplus::Bitmap* result = temp->Clone(0, 0, temp->GetWidth(), temp->GetHeight(), PixelFormat32bppARGB);
+    delete temp;
+    pStream->Release();
+
+    return result;
+}
+
 HWND OpenEditor(const std::wstring& filepath) {
     // Create editor state
     auto state = std::make_unique<EditorState>();
     state->filepath = filepath;
 
-    // Load image
-    state->originalImage = Gdiplus::Bitmap::FromFile(filepath.c_str());
+    // Load image without locking file
+    state->originalImage = LoadImageWithoutLock(filepath.c_str());
     if (!state->originalImage || state->originalImage->GetLastStatus() != Gdiplus::Ok) {
         MessageBoxW(nullptr, L"Failed to load image", L"Error", MB_ICONERROR);
         delete state->originalImage;
@@ -167,6 +210,79 @@ POINT CanvasToScreen(EditorState* state, POINT canvasPt) {
     screenPt.x = (int)(canvasPt.x * state->zoom + state->canvasRect.left + centerX);
     screenPt.y = (int)(canvasPt.y * state->zoom + state->canvasRect.top + centerY);
     return screenPt;
+}
+
+// Tool names for tooltips
+static const wchar_t* TOOL_NAMES[] = {
+    L"Select (1)",
+    L"Arrow (2)",
+    L"Rectangle (3)",
+    L"Ellipse (4)",
+    L"Pen (5)",
+    L"Highlighter (6)",
+    L"Text (7)",
+    L"Blur (8)",
+    L"Crop (9)"
+};
+
+// Crop handle indices:
+// 0=TopLeft, 1=TopCenter, 2=TopRight
+// 3=MiddleLeft, 4=MiddleRight
+// 5=BottomLeft, 6=BottomCenter, 7=BottomRight
+// -1 = inside crop area (for moving), -2 = outside
+static const int HANDLE_SIZE = 10;
+
+static int GetCropHandleAtPoint(EditorState* state, int screenX, int screenY) {
+    if (!state->cropActive || !state->displayImage) return -2;
+
+    int imgWidth = state->displayImage->GetWidth();
+    int imgHeight = state->displayImage->GetHeight();
+    int canvasWidth = state->canvasRect.right - state->canvasRect.left;
+    int canvasHeight = state->canvasRect.bottom - state->canvasRect.top;
+    int centerX = (canvasWidth - (int)(imgWidth * state->zoom)) / 2 + state->panOffset.x;
+    int centerY = (canvasHeight - (int)(imgHeight * state->zoom)) / 2 + state->panOffset.y;
+
+    // Convert crop rect to screen coordinates
+    int cx = (int)(state->cropRect.left * state->zoom) + state->canvasRect.left + centerX;
+    int cy = (int)(state->cropRect.top * state->zoom) + state->canvasRect.top + centerY;
+    int cw = (int)((state->cropRect.right - state->cropRect.left) * state->zoom);
+    int ch = (int)((state->cropRect.bottom - state->cropRect.top) * state->zoom);
+
+    int hs = HANDLE_SIZE;
+
+    // Define handle positions
+    RECT handles[8] = {
+        { cx - hs/2, cy - hs/2, cx + hs/2, cy + hs/2 },                     // 0: TopLeft
+        { cx + cw/2 - hs/2, cy - hs/2, cx + cw/2 + hs/2, cy + hs/2 },       // 1: TopCenter
+        { cx + cw - hs/2, cy - hs/2, cx + cw + hs/2, cy + hs/2 },           // 2: TopRight
+        { cx - hs/2, cy + ch/2 - hs/2, cx + hs/2, cy + ch/2 + hs/2 },       // 3: MiddleLeft
+        { cx + cw - hs/2, cy + ch/2 - hs/2, cx + cw + hs/2, cy + ch/2 + hs/2 }, // 4: MiddleRight
+        { cx - hs/2, cy + ch - hs/2, cx + hs/2, cy + ch + hs/2 },           // 5: BottomLeft
+        { cx + cw/2 - hs/2, cy + ch - hs/2, cx + cw/2 + hs/2, cy + ch + hs/2 }, // 6: BottomCenter
+        { cx + cw - hs/2, cy + ch - hs/2, cx + cw + hs/2, cy + ch + hs/2 }  // 7: BottomRight
+    };
+
+    POINT pt = { screenX, screenY };
+    for (int i = 0; i < 8; i++) {
+        if (PtInRect(&handles[i], pt)) return i;
+    }
+
+    // Check if inside crop area
+    RECT cropScreen = { cx, cy, cx + cw, cy + ch };
+    if (PtInRect(&cropScreen, pt)) return -1;  // Inside, can move
+
+    return -2;  // Outside
+}
+
+static HCURSOR GetCropCursor(int handle) {
+    switch (handle) {
+        case 0: case 7: return LoadCursor(nullptr, IDC_SIZENWSE);  // TopLeft, BottomRight
+        case 2: case 5: return LoadCursor(nullptr, IDC_SIZENESW);  // TopRight, BottomLeft
+        case 1: case 6: return LoadCursor(nullptr, IDC_SIZENS);    // Top, Bottom
+        case 3: case 4: return LoadCursor(nullptr, IDC_SIZEWE);    // Left, Right
+        case -1: return LoadCursor(nullptr, IDC_SIZEALL);          // Move
+        default: return LoadCursor(nullptr, IDC_ARROW);
+    }
 }
 
 void ApplyBlurToRegion(Gdiplus::Bitmap* bitmap, const RECT& region, int blockSize) {
@@ -449,6 +565,50 @@ void DrawEditorToolbar(HDC hdc, EditorState* state) {
     oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
     DrawTextW(hdc, L"Save", -1, &saveRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     SelectObject(hdc, oldFont);
+
+    // Draw tooltip if hovering over a tool button
+    if (state->hoveredTool >= 0 && state->hoveredTool <= (int)EditorTool::Crop) {
+        const wchar_t* tooltipText = TOOL_NAMES[state->hoveredTool];
+
+        // Calculate tooltip position (below the button)
+        int tooltipX = 12 + state->hoveredTool * (EDITOR_TOOL_SIZE + 4);
+        int tooltipY = EDITOR_TOOLBAR_HEIGHT - 2;
+
+        // Measure text
+        SIZE textSize;
+        oldFont = (HFONT)SelectObject(hdc, g_app.fontSmall);
+        GetTextExtentPoint32W(hdc, tooltipText, (int)wcslen(tooltipText), &textSize);
+
+        int padding = 8;
+        RECT tipRect = {
+            tooltipX,
+            tooltipY,
+            tooltipX + textSize.cx + padding * 2,
+            tooltipY + textSize.cy + padding
+        };
+
+        // Draw tooltip background
+        HBRUSH tipBrush = CreateSolidBrush(RGB(50, 50, 55));
+        FillRect(hdc, &tipRect, tipBrush);
+        DeleteObject(tipBrush);
+
+        // Draw border
+        HPEN tipPen = CreatePen(PS_SOLID, 1, Colors::Divider);
+        HPEN oldPen = (HPEN)SelectObject(hdc, tipPen);
+        HBRUSH oldBrushTip = (HBRUSH)SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        Rectangle(hdc, tipRect.left, tipRect.top, tipRect.right, tipRect.bottom);
+        SelectObject(hdc, oldPen);
+        SelectObject(hdc, oldBrushTip);
+        DeleteObject(tipPen);
+
+        // Draw text
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, Colors::Text);
+        tipRect.left += padding;
+        tipRect.top += padding / 2;
+        DrawTextW(hdc, tooltipText, -1, &tipRect, DT_LEFT | DT_TOP);
+        SelectObject(hdc, oldFont);
+    }
 }
 
 void DrawEditorCanvas(HDC hdc, EditorState* state) {
@@ -517,13 +677,39 @@ void DrawEditorCanvas(HDC hdc, EditorState* state) {
         Gdiplus::Pen cropPen(Gdiplus::Color(255, 255, 255, 255), 2);
         g.DrawRectangle(&cropPen, cx, cy, cw, ch);
 
-        // Crop handles
-        int handleSize = 8;
+        // Draw all 8 crop handles
+        int hs = HANDLE_SIZE;
         Gdiplus::SolidBrush handleBrush(Gdiplus::Color(255, 76, 194, 255));
-        g.FillRectangle(&handleBrush, cx - handleSize/2, cy - handleSize/2, handleSize, handleSize);
-        g.FillRectangle(&handleBrush, cx + cw - handleSize/2, cy - handleSize/2, handleSize, handleSize);
-        g.FillRectangle(&handleBrush, cx - handleSize/2, cy + ch - handleSize/2, handleSize, handleSize);
-        g.FillRectangle(&handleBrush, cx + cw - handleSize/2, cy + ch - handleSize/2, handleSize, handleSize);
+        Gdiplus::Pen handlePen(Gdiplus::Color(255, 255, 255, 255), 1);
+
+        // Corner handles
+        g.FillRectangle(&handleBrush, cx - hs/2, cy - hs/2, hs, hs);                 // TopLeft
+        g.FillRectangle(&handleBrush, cx + cw - hs/2, cy - hs/2, hs, hs);            // TopRight
+        g.FillRectangle(&handleBrush, cx - hs/2, cy + ch - hs/2, hs, hs);            // BottomLeft
+        g.FillRectangle(&handleBrush, cx + cw - hs/2, cy + ch - hs/2, hs, hs);       // BottomRight
+
+        // Edge handles
+        g.FillRectangle(&handleBrush, cx + cw/2 - hs/2, cy - hs/2, hs, hs);          // TopCenter
+        g.FillRectangle(&handleBrush, cx + cw/2 - hs/2, cy + ch - hs/2, hs, hs);     // BottomCenter
+        g.FillRectangle(&handleBrush, cx - hs/2, cy + ch/2 - hs/2, hs, hs);          // MiddleLeft
+        g.FillRectangle(&handleBrush, cx + cw - hs/2, cy + ch/2 - hs/2, hs, hs);     // MiddleRight
+
+        // Draw handle borders
+        g.DrawRectangle(&handlePen, cx - hs/2, cy - hs/2, hs, hs);
+        g.DrawRectangle(&handlePen, cx + cw - hs/2, cy - hs/2, hs, hs);
+        g.DrawRectangle(&handlePen, cx - hs/2, cy + ch - hs/2, hs, hs);
+        g.DrawRectangle(&handlePen, cx + cw - hs/2, cy + ch - hs/2, hs, hs);
+        g.DrawRectangle(&handlePen, cx + cw/2 - hs/2, cy - hs/2, hs, hs);
+        g.DrawRectangle(&handlePen, cx + cw/2 - hs/2, cy + ch - hs/2, hs, hs);
+        g.DrawRectangle(&handlePen, cx - hs/2, cy + ch/2 - hs/2, hs, hs);
+        g.DrawRectangle(&handlePen, cx + cw - hs/2, cy + ch/2 - hs/2, hs, hs);
+
+        // Show "Press Enter to apply crop" hint
+        Gdiplus::FontFamily family(L"Segoe UI");
+        Gdiplus::Font hintFont(&family, 12);
+        Gdiplus::SolidBrush hintBrush(Gdiplus::Color(255, 255, 255, 255));
+        g.DrawString(L"Press Enter to apply crop, Esc to cancel", -1, &hintFont,
+            Gdiplus::PointF((float)(cx + 5), (float)(cy + ch + 5)), &hintBrush);
     }
 
     // Draw text input cursor
@@ -566,19 +752,53 @@ bool SaveEditorImage(EditorState* state, const wchar_t* filepath) {
     // Render all objects to image
     RenderObjectsToImage(state);
 
-    // Save as PNG
-    CLSID pngClsid;
-    CLSIDFromString(L"{557CF406-1A04-11D3-9A73-0000F81EF32E}", &pngClsid);
+    // Create a copy of the image in memory (to avoid file lock issues)
+    int width = state->displayImage->GetWidth();
+    int height = state->displayImage->GetHeight();
 
-    Gdiplus::Status status = state->displayImage->Save(filepath, &pngClsid);
+    Gdiplus::Bitmap* saveBitmap = new Gdiplus::Bitmap(width, height, PixelFormat32bppARGB);
+    Gdiplus::Graphics g(saveBitmap);
+    g.DrawImage(state->displayImage, 0, 0, width, height);
+
+    // Get PNG encoder CLSID
+    CLSID pngClsid;
+    UINT numEncoders, size;
+    Gdiplus::GetImageEncodersSize(&numEncoders, &size);
+
+    Gdiplus::ImageCodecInfo* encoders = (Gdiplus::ImageCodecInfo*)malloc(size);
+    Gdiplus::GetImageEncoders(numEncoders, size, encoders);
+
+    bool foundEncoder = false;
+    for (UINT i = 0; i < numEncoders; i++) {
+        if (wcscmp(encoders[i].MimeType, L"image/png") == 0) {
+            pngClsid = encoders[i].Clsid;
+            foundEncoder = true;
+            break;
+        }
+    }
+    free(encoders);
+
+    if (!foundEncoder) {
+        delete saveBitmap;
+        return false;
+    }
+
+    // Save to file
+    Gdiplus::Status status = saveBitmap->Save(filepath, &pngClsid);
+    delete saveBitmap;
 
     if (status == Gdiplus::Ok) {
         state->unsavedChanges = false;
         state->objects.clear();  // Clear objects since they're now baked in
 
-        // Reload the image
+        // Reload the image from the saved file (without locking)
         delete state->displayImage;
-        state->displayImage = Gdiplus::Bitmap::FromFile(filepath);
+        state->displayImage = LoadImageWithoutLock(filepath);
+
+        if (!state->displayImage) {
+            // Fallback: create empty bitmap with same dimensions
+            state->displayImage = new Gdiplus::Bitmap(width, height, PixelFormat32bppARGB);
+        }
 
         return true;
     }
@@ -705,12 +925,76 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
                 }
             }
 
-            if (state->cropActive && state->cropHandle >= 0) {
-                // Dragging crop handle
-                // ... handle crop resize
+            // Handle crop resize/move
+            if (state->cropActive && state->cropHandle >= -1) {
+                int dx = canvasPt.x - state->drawStart.x;
+                int dy = canvasPt.y - state->drawStart.y;
+                state->drawStart = canvasPt;
+
+                int imgWidth = state->displayImage ? state->displayImage->GetWidth() : 1;
+                int imgHeight = state->displayImage ? state->displayImage->GetHeight() : 1;
+
+                RECT& crop = state->cropRect;
+
+                switch (state->cropHandle) {
+                    case -1:  // Move entire crop area
+                        crop.left += dx;
+                        crop.right += dx;
+                        crop.top += dy;
+                        crop.bottom += dy;
+                        break;
+                    case 0:  // TopLeft
+                        crop.left += dx;
+                        crop.top += dy;
+                        break;
+                    case 1:  // TopCenter
+                        crop.top += dy;
+                        break;
+                    case 2:  // TopRight
+                        crop.right += dx;
+                        crop.top += dy;
+                        break;
+                    case 3:  // MiddleLeft
+                        crop.left += dx;
+                        break;
+                    case 4:  // MiddleRight
+                        crop.right += dx;
+                        break;
+                    case 5:  // BottomLeft
+                        crop.left += dx;
+                        crop.bottom += dy;
+                        break;
+                    case 6:  // BottomCenter
+                        crop.bottom += dy;
+                        break;
+                    case 7:  // BottomRight
+                        crop.right += dx;
+                        crop.bottom += dy;
+                        break;
+                }
+
+                // Ensure minimum size
+                if (crop.right - crop.left < 10) crop.right = crop.left + 10;
+                if (crop.bottom - crop.top < 10) crop.bottom = crop.top + 10;
+
+                // Clamp to image bounds
+                if (crop.left < 0) { crop.right -= crop.left; crop.left = 0; }
+                if (crop.top < 0) { crop.bottom -= crop.top; crop.top = 0; }
+                if (crop.right > imgWidth) { crop.left -= (crop.right - imgWidth); crop.right = imgWidth; }
+                if (crop.bottom > imgHeight) { crop.top -= (crop.bottom - imgHeight); crop.bottom = imgHeight; }
+                crop.left = (std::max)(0L, crop.left);
+                crop.top = (std::max)(0L, crop.top);
+                crop.right = (std::min)((LONG)imgWidth, crop.right);
+                crop.bottom = (std::min)((LONG)imgHeight, crop.bottom);
             }
 
             InvalidateRect(hwnd, &state->canvasRect, FALSE);
+        }
+
+        // Update cursor for crop handles when not drawing
+        if (state->cropActive && !state->isDrawing && y > EDITOR_TOOLBAR_HEIGHT) {
+            int handle = GetCropHandleAtPoint(state, x, y);
+            SetCursor(GetCropCursor(handle));
         }
 
         // Handle panning
@@ -819,6 +1103,19 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
             }
 
             return 0;
+        }
+
+        // Check crop handle interaction first
+        if (state->cropActive) {
+            int handle = GetCropHandleAtPoint(state, x, y);
+            if (handle >= -1) {  // -1 = inside (move), 0-7 = handles
+                SetCapture(hwnd);
+                state->cropHandle = handle;
+                state->drawStart = ScreenToCanvas(state, { x, y });
+                state->isDrawing = true;
+                SetCursor(GetCropCursor(handle));
+                return 0;
+            }
         }
 
         // Canvas interaction
@@ -933,6 +1230,7 @@ LRESULT CALLBACK EditorWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam
 
         state->isDrawing = false;
         state->isPanning = false;
+        state->cropHandle = -2;  // Reset crop handle
         InvalidateRect(hwnd, &state->canvasRect, FALSE);
         return 0;
     }
