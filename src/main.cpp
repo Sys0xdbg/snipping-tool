@@ -24,7 +24,20 @@ const int NUM_BUTTONS = sizeof(g_buttons) / sizeof(g_buttons[0]);
 //------------------------------------------------------------------------------
 // Entry Point
 //------------------------------------------------------------------------------
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
+    // Single instance check using mutex
+    HANDLE hMutex = CreateMutexW(nullptr, TRUE, L"SnippingToolSingleInstance");
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        // App already running - find existing window and show it
+        HWND existingWnd = FindWindowW(L"SnippingToolMain", L"Snipping Tool");
+        if (existingWnd) {
+            ShowWindow(existingWnd, SW_SHOW);
+            SetForegroundWindow(existingWnd);
+        }
+        CloseHandle(hMutex);
+        return 0;
+    }
+
     // Enable Per-Monitor DPI awareness for accurate window coordinates
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
 
@@ -108,8 +121,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
         nullptr, nullptr, hInstance, nullptr
     );
 
-    ShowWindow(g_app.mainWnd, nCmdShow);
-    UpdateWindow(g_app.mainWnd);
+    // Start minimized to tray - don't show main window
+    // User can click tray icon or use hotkeys to show/capture
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {
@@ -126,5 +139,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int nCmdShow) {
     Gdiplus::GdiplusShutdown(g_app.gdiplusToken);
 
     CoUninitialize();
+    CloseHandle(hMutex);
     return (int)msg.wParam;
 }
